@@ -1,0 +1,13 @@
+执行 MOTrade 的每日分析（技能：motrade_analyze，见 .claude/skills/motrade-analyze/SKILL.md）。
+
+步骤：
+1. cd 到当前项目目录，运行 `python pipeline.py`，得到 data/latest_watchlist.json
+2. 读取里面的 signals，结合 strategies/*.yaml 四条策略描述做分类（企稳 / 仍在下跌 / 新卡衰减 / 老卡折价），
+   给每张卡一句话研判
+3. 只挑"企稳"和"老卡折价"这两类里你认为真正值得关注的（10-20张），准备写入仪表盘
+4. 用 Artifact 工具，先 read_db 看当前仪表盘（https://claude.ai/code/artifact/1e6623c1-9314-4778-bb5a-83f689947e9e）
+   watchlist 集合里有哪些旧文档，删掉这次不再入选的，再 write_db batch 写入新一批（含 verdict 和 note 字段）
+5. 如果出现"老卡折价"里可信度特别高的信号，用 PushNotification 简短提醒一句；平淡的日子不用发通知
+6. 全程遵守 docs/PRINCIPLES.md：只用官方公开数据，不抓买价，不碰账号自动化，不外传个人信息
+
+完成后不需要额外输出总结，仪表盘更新即完成任务。
