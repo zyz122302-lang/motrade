@@ -298,12 +298,13 @@
       <div id="obs-empty" class="empty-state" hidden>还没有记录。</div>
       <div class="table-wrap">
         <table id="obs-table" hidden>
-          <thead><tr><th>卡牌</th><th>Bot</th><th class="num">收购价</th><th>日期</th></tr></thead>
+          <thead><tr><th>卡牌</th><th>版本</th><th>Bot</th><th class="num">收购价</th><th>日期</th><th></th></tr></thead>
           <tbody id="obs-body"></tbody>
         </table>
       </div>
       <form class="entry" id="obs-form">
         <div class="full"><label for="o-name">卡牌名称</label><input id="o-name" type="text" required /></div>
+        <div><label for="o-set">版本 / Set（如 PRM、MH3 F，可空）</label><input id="o-set" type="text" placeholder="例如 PRM 或 MH3 F" /></div>
         <div><label for="o-bot">Bot</label><select id="o-bot"><option>GoatBots</option><option>Cardhoarder</option><option>其他</option></select></div>
         <div><label for="o-price">收购价 (TIX)</label><input id="o-price" type="number" min="0" step="0.01" required /></div>
         <button type="submit">记录买价</button>
@@ -313,8 +314,9 @@
         <summary style="cursor:pointer;font-size:12.5px;color:var(--text-dim);">一次看多张卡？批量粘贴录入</summary>
         <form class="entry" id="obs-batch-form" style="margin-top:10px;">
           <div class="full">
-            <label for="o-batch">每行一条，格式："卡名, 收购价" 或 "卡名, 收购价, Bot"（Bot 不填默认 GoatBots）</label>
-            <textarea id="o-batch" rows="5" placeholder="Ragavan, Nimble Pilferer, 12.5&#10;Scroll Rack, 3.2, Cardhoarder" style="width:100%;background:var(--paper);border:1px solid var(--line);border-radius:6px;padding:7px 9px;font-size:13.5px;color:var(--text);font-family:'IBM Plex Mono',monospace;"></textarea>
+            <label for="o-batch">每行一条，用竖线 | 分隔（卡名本身常带逗号，比如"Ragavan, Nimble Pilferer"，所以不能用逗号分隔）：
+              "卡名 | 收购价"（不分版本）或 "卡名 | 版本 | 收购价" 或 "卡名 | 版本 | 收购价 | Bot"（Bot 不填默认 GoatBots）</label>
+            <textarea id="o-batch" rows="5" placeholder="Ragavan, Nimble Pilferer | MH2 | 12.5&#10;Scroll Rack | PRM | 3.2 | Cardhoarder" style="width:100%;background:var(--paper);border:1px solid var(--line);border-radius:6px;padding:7px 9px;font-size:13.5px;color:var(--text);font-family:'IBM Plex Mono',monospace;"></textarea>
           </div>
           <button type="submit">批量记录</button>
           <div class="form-msg full" id="obs-batch-msg"></div>
@@ -460,8 +462,9 @@
     tbl.hidden = false; empty.hidden = true;
     var sorted = items.slice().sort(function (a, b) { return (b.date || '').localeCompare(a.date || ''); });
     body.innerHTML = sorted.map(function (o) {
-      return '<tr><td class="card-name">' + escapeHtml(o.name) + '</td><td>' + escapeHtml(o.bot || '') +
-        '</td><td class="num price">' + fmtTix(o.price) + '</td><td class="mono">' + escapeHtml(o.date || '') + '</td></tr>';
+      return '<tr><td class="card-name">' + escapeHtml(o.name) + '</td><td class="mono">' + escapeHtml(o.set || '—') + '</td><td>' + escapeHtml(o.bot || '') +
+        '</td><td class="num price">' + fmtTix(o.price) + '</td><td class="mono">' + escapeHtml(o.date || '') + '</td>' +
+        '<td><button class="icon-btn" data-del-obs="' + o.id + '" title="删除">&times;</button></td></tr>';
     }).join('');
   }
 
@@ -658,7 +661,12 @@
     }, function () { renderHoldings(); });
 
     db.collection('buy_observations').onSnapshot(function (snap) {
-      renderObs(snap.docs.map(function (d) { return d.data(); }));
+      renderObs(snap.docs.map(function (d) {
+        var v = {}; var src = d.data();
+        for (var k in src) v[k] = src[k];
+        v.id = d.id;
+        return v;
+      }));
     }, function () { renderObs([]); });
 
     document.getElementById('holding-form').addEventListener('submit', async function (ev) {
@@ -684,12 +692,13 @@
       var msg = document.getElementById('obs-msg');
       var btn = ev.target.querySelector('button');
       var name = document.getElementById('o-name').value.trim();
+      var set = document.getElementById('o-set').value.trim();
       var bot = document.getElementById('o-bot').value;
       var price = parseFloat(document.getElementById('o-price').value);
       if (!name || isNaN(price)) { msg.textContent = '请填写完整'; msg.className = 'form-msg err full'; return; }
       btn.disabled = true; msg.textContent = ''; msg.className = 'form-msg full';
       try {
-        await db.collection('buy_observations').add({ name: name, bot: bot, price: price, date: todayStr() });
+        await db.collection('buy_observations').add({ name: name, set: set, bot: bot, price: price, date: todayStr() });
         ev.target.reset();
         msg.textContent = '已记录'; msg.className = 'form-msg ok full';
       } catch (e) { msg.textContent = '保存失败: ' + (e && e.message ? e.message : '未知错误'); msg.className = 'form-msg err full'; }
@@ -706,14 +715,15 @@
       var validBots = ['GoatBots', 'Cardhoarder', '其他'];
       var parsed = [], errors = [];
       lines.forEach(function (line, i) {
-        var parts = line.split(',').map(function (p) { return p.trim(); });
-        if (parts.length < 2) { errors.push('第' + (i + 1) + '行：格式不对，缺少逗号分隔的价格'); return; }
-        var name = parts[0];
-        var price = parseFloat(parts[1]);
-        var bot = parts[2] || 'GoatBots';
+        var parts = line.split('|').map(function (p) { return p.trim(); });
+        var name, set, price, bot;
+        if (parts.length === 2) { name = parts[0]; set = ''; price = parseFloat(parts[1]); bot = 'GoatBots'; }
+        else if (parts.length === 3) { name = parts[0]; set = parts[1]; price = parseFloat(parts[2]); bot = 'GoatBots'; }
+        else if (parts.length >= 4) { name = parts[0]; set = parts[1]; price = parseFloat(parts[2]); bot = parts[3] || 'GoatBots'; }
+        else { errors.push('第' + (i + 1) + '行：格式不对，至少要有"卡名 | 收购价"两部分（用竖线 | 分隔）'); return; }
         if (validBots.indexOf(bot) === -1) bot = '其他';
         if (!name || isNaN(price)) { errors.push('第' + (i + 1) + '行：卡名或价格无法识别'); return; }
-        parsed.push({ name: name, bot: bot, price: price, date: todayStr() });
+        parsed.push({ name: name, set: set, bot: bot, price: price, date: todayStr() });
       });
       if (!parsed.length) { msg.textContent = errors.join('；'); msg.className = 'form-msg err full'; return; }
       btn.disabled = true; msg.textContent = '提交中…'; msg.className = 'form-msg full';
@@ -736,6 +746,12 @@
       var id = ev.target.getAttribute('data-del-holding');
       if (!id) return;
       await db.collection('portfolio').doc(id).delete();
+    });
+
+    document.getElementById('obs-body').addEventListener('click', async function (ev) {
+      var id = ev.target.getAttribute('data-del-obs');
+      if (!id) return;
+      await db.collection('buy_observations').doc(id).delete();
     });
   }
 
