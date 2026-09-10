@@ -38,6 +38,17 @@ CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT
 );
+
+CREATE TABLE IF NOT EXISTS metagame_usage (
+    name TEXT NOT NULL,
+    format TEXT NOT NULL,
+    week_of TEXT NOT NULL,
+    deck_count INTEGER NOT NULL,
+    sample_size INTEGER NOT NULL,
+    source TEXT NOT NULL,
+    PRIMARY KEY (name, format, week_of, source)
+);
+CREATE INDEX IF NOT EXISTS idx_metagame_usage_name ON metagame_usage(name, format);
 """
 
 
@@ -116,6 +127,50 @@ def set_meta(conn, key: str, value: str):
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         (key, value),
     )
+
+
+def upsert_metagame_usage(conn, week_of: str, format_: str, source: str, usage: dict):
+    """usage: {card_name: deck_count}。sample_size 是这一批统计的总样本套牌数，
+    存进每一行方便算占比（deck_count / sample_size）。"""
+    sample_size = usage.pop("__sample_size__", 0)
+    rows = [
+        (name, format_, week_of, count, sample_size, source)
+        for name, count in usage.items()
+    ]
+    if rows:
+        conn.executemany(
+            """INSERT INTO metagame_usage (name, format, week_of, deck_count, sample_size, source)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(name, format, week_of, source) DO UPDATE SET
+                 deck_count=excluded.deck_count, sample_size=excluded.sample_size""",
+            rows,
+        )
+    return len(rows)
+
+
+def metagame_usage_trend(conn, name: str, format_: str, limit_weeks: int = 8):
+    """返回该卡在某赛制里最近几周的使用率序列：[(week_of, play_rate), ...]，
+    合并同一周内多个 source（比如 MTGO 官方 + MTGTop8）的样本后再算占比。"""
+    rows = conn.execute(
+        """SELECT week_of, SUM(deck_count), SUM(sample_size) FROM metagame_usage
+           WHERE name = ? AND format = ? GROUP BY week_of ORDER BY week_of DESC LIMIT ?""",
+        (name, format_, limit_weeks),
+    ).fetchall()
+    out = [(w, (dc / ss) if ss else 0.0) for w, dc, ss in rows]
+    return list(reversed(out))
+
+
+def top_metagame_cards(conn, format_: str, week_of: str, min_play_rate: float = 0.0):
+    """某赛制某一周里，使用率从高到低排的卡列表：[(name, play_rate), ...]。"""
+    rows = conn.execute(
+        """SELECT name, SUM(deck_count), SUM(sample_size) FROM metagame_usage
+           WHERE format = ? AND week_of = ? GROUP BY name""",
+        (format_, week_of),
+    ).fetchall()
+    out = [(name, dc / ss) for name, dc, ss in rows if ss]
+    out = [x for x in out if x[1] >= min_play_rate]
+    out.sort(key=lambda x: -x[1])
+    return out
 
 
 def price_history_for(conn, mtgo_id: int, limit_days: int = 400):
