@@ -148,6 +148,35 @@ def upsert_metagame_usage(conn, week_of: str, format_: str, source: str, usage: 
     return len(rows)
 
 
+def metagame_usage_for_week(conn, week_of: str) -> dict:
+    """把某一周刚写入的 metagame_usage 数据导出成
+    {format: {"sample_size": N, "usage": {name: deck_count}}}，
+    用于云端 routine 把这周的统计结果同步写进仪表盘 Artifact 的数据库
+    （本地 SQLite 在云端每次运行都是全新的，不会跨次保留）。"""
+    rows = conn.execute(
+        "SELECT format, name, deck_count, sample_size FROM metagame_usage WHERE week_of = ?",
+        (week_of,),
+    ).fetchall()
+    out = {}
+    for fmt, name, deck_count, sample_size in rows:
+        bucket = out.setdefault(fmt, {"sample_size": sample_size, "usage": {}})
+        bucket["usage"][name] = deck_count
+    return out
+
+
+def import_metagame_usage_snapshot(conn, snapshot: dict, source: str = "mtgo_official"):
+    """把从 Artifact `metagame_usage` 集合读回来的历史数据灌回本地 SQLite，
+    snapshot 结构：{format: [{"week_of": ..., "sample_size": ..., "usage": {name: count}}, ...]}。
+    每天流水线在算 formatUsage 之前先跑这一步，这样云端每次全新环境也能看到过去几周的数据。"""
+    total = 0
+    for fmt, weeks in snapshot.items():
+        for week in weeks:
+            usage = dict(week.get("usage") or {})
+            usage["__sample_size__"] = week.get("sample_size", 0)
+            total += upsert_metagame_usage(conn, week["week_of"], fmt, source, usage)
+    return total
+
+
 def metagame_usage_trend(conn, name: str, format_: str, limit_weeks: int = 8):
     """返回该卡在某赛制里最近几周的使用率序列：[(week_of, play_rate), ...]，
     合并同一周内多个 source（比如 MTGO 官方 + MTGTop8）的样本后再算占比。"""

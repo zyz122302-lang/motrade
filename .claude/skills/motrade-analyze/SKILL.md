@@ -11,6 +11,14 @@ description: "生成 MOTrade 每日 MTGO 单卡分析报告并更新仪表盘。
 参考 ZhuLinsen/daily_stock_analysis 的分工方式：**指标计算是确定性代码，"这个信号值不值得关注"
 是 Claude 结合策略描述做的综合判断**，两者不要混在一起写死。
 
+## 每周赛事使用率（另一个独立的定时任务，不是这个技能负责触发）
+
+`metagame_pipeline.py` 从 MTGO 官方赛事牌表（mtgo.com/decklists，Challenge + 每日 League 5-0，
+Modern/Legacy/Standard/Pauper）统计每周各卡使用率，写进本地 `metagame_usage` 表。**这个脚本由
+另一个周度 routine（每周二跑一次）负责触发，不属于本技能的每日流程**，但本技能第 1 步的
+`pipeline.py` 会读取它写好的数据算出每张卡的 `formats`/`formatUsage`。如果周度任务还没跑过，
+`formats` 会是空数组，这是正常现象，不代表出错。
+
 ## 运行步骤
 
 ### 1. 跑数据管道（确定性代码，不需要 LLM）
@@ -66,8 +74,14 @@ Pauper/Modern/Legacy"），确认真实原因后再写 note。确实搜不到解
 
 下跌候选里只挑 `falling_knife`（仍在下跌，但值得关注/警示）和 `established`（企稳或老卡折价）
 这两类；上涨候选里只挑 `momentum`（真实动能）和 `caution`（数值异常但值得记录，比如低基数补价）
-——每个方向各挑 8-15 张你认为真正值得展示的，不要为了凑数硬塞噪音（比如纯 EDH/Commander
-需求驱动、和 Modern/Legacy 竞技关系不大的卡，可以直接不选或标 caution 并说明原因）。
+——不要为了凑数硬塞噪音（比如纯 EDH/Commander 需求驱动、和 Modern/Legacy 竞技关系不大的卡，
+可以直接不选或标 caution 并说明原因）。
+
+仪表盘按赛制（标准/摩登/薪传/纯铁）分开展示，每个赛制最多显示 10 张卡，所以选卡时按
+`data/latest_watchlist.json` 里每张卡的 `formatUsage` 字段（见下一节的周度数据）分别看：
+每个赛制下跌/上涨各挑不超过 10 张最值得看的；没有 `formatUsage`（不在任何赛制的周度使用率
+统计里）的卡仍然可以选，仪表盘会放进"全部"里，但不会出现在具体赛制分类下——这类卡通常是
+Cube/Commander 向的，情报面判断时要说明"未见近期 Modern/Legacy/Standard/Pauper 竞技赛事采用"。
 
 ### 4. 写入仪表盘数据库
 
@@ -81,6 +95,7 @@ Pauper/Modern/Legacy"），确认真实原因后再写 note。确实搜不到解
   bestPrice, bestSource,       // "goatbots" | "cardhoarder"，所有版本+两个数据源里的最低价
   primaryMtgoId,                // 达成 bestPrice 的那个版本的 mtgo_id
   chg7d, chg30d, low90, ma7, ma30,   // 取自 primary version（最低价那个版本）的指标
+  formats: ["modern","legacy"],   // 直接抄 latest_watchlist.json 里这张卡的 formats 数组
   direction: "rise",   // 上涨候选必须带这个字段；下跌候选不用带（省略即默认下跌）
   verdict: "stabilizing" | "falling_knife" | "established" | "momentum" | "caution" | "new_set",
   note: "一两句话的研判，中文，供仪表盘详情页展示",

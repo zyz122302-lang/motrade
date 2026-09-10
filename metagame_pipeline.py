@@ -9,13 +9,16 @@
 MTGTop8 线下 2 星以上赛事作为补充数据源，另见 mtgtop8_fetcher.py。
 """
 
+import json
 from datetime import date, datetime, timedelta
 
 import storage
+from config import DATA_DIR
 from fetchers import mtgo_metagame_fetcher
 
 FORMATS = ("modern", "legacy", "standard", "pauper")
 LOOKBACK_DAYS = 8  # 覆盖上一整周 + 一点缓冲
+EXPORT_PATH = DATA_DIR / "metagame_export.json"
 
 
 def week_of_monday(d: date) -> str:
@@ -67,7 +70,17 @@ def run():
             print(f"[storage] {fmt}: {n} card rows, sample_size={sample_by_format[fmt]}")
 
         storage.set_meta(conn, "metagame_last_run", datetime.now().isoformat())
-        print(f"[done] week_of={week_key}, total rows written={total_rows}")
+
+        # 导出这一周的数据，供云端 routine 读取后 write_db 到 Artifact 仪表盘数据库
+        # （本地 SQLite 在云端每次运行都是全新的，靠这个文件桥接到仪表盘那边持久化）。
+        export = {
+            fmt: [{"week_of": week_key, "sample_size": sample_by_format[fmt], "usage": usage_by_format[fmt]}]
+            for fmt in FORMATS
+            if sample_by_format[fmt] > 0
+        }
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        EXPORT_PATH.write_text(json.dumps(export, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"[done] week_of={week_key}, total rows written={total_rows}, exported to {EXPORT_PATH}")
 
 
 if __name__ == "__main__":

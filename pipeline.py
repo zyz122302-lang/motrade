@@ -23,8 +23,23 @@ from fetchers import goatbots_fetcher, scryfall_fetcher
 
 LEGALITY_REFRESH_DAYS = 7
 OUTPUT_PATH = DATA_DIR / "latest_watchlist.json"
+METAGAME_IMPORT_PATH = DATA_DIR / "metagame_import.json"
 METAGAME_FORMATS = ("standard", "modern", "legacy", "pauper")
 USAGE_RELEVANCE_THRESHOLD = 0.02  # 至少 2% 的牌表用到才算"在这个赛制里活跃"
+
+
+def import_metagame_usage_if_present(conn):
+    """云端环境每次都是全新 checkout，本地不会留有历史赛事使用率数据。
+    这一步读取云端 routine 事先从 Artifact 仪表盘数据库 read_db 出来、写好的
+    data/metagame_import.json（结构见 storage.import_metagame_usage_snapshot），
+    灌回本地 SQLite，这样 format_usage_for() 才能查到过去几周的数据。
+    本地跑的时候如果没有这个文件，直接跳过，不影响其他功能。"""
+    if not METAGAME_IMPORT_PATH.exists():
+        print("[metagame] no metagame_import.json found, skip (formats 会是空的)")
+        return
+    snapshot = json.loads(METAGAME_IMPORT_PATH.read_text(encoding="utf-8"))
+    n = storage.import_metagame_usage_snapshot(conn, snapshot)
+    print(f"[metagame] imported {n} rows from metagame_import.json")
 
 
 def format_usage_for(conn, name: str) -> dict:
@@ -78,6 +93,8 @@ def bootstrap_year_history_if_needed(conn, year: int, version_ids: set):
 
 def run():
     with storage.connect() as conn:
+        import_metagame_usage_if_present(conn)
+
         print("[goatbots] fetching card definitions ...")
         card_defs = goatbots_fetcher.fetch_card_definitions()
         storage.upsert_cards(conn, card_defs)
