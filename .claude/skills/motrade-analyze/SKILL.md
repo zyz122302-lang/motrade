@@ -71,6 +71,9 @@ Pauper/Modern/Legacy"），确认真实原因后再写 note。确实搜不到解
 {
   name, set, rarity, foil, price, asOf,
   chg7d, chg30d, low90, ma7, ma30,
+  cardhoarderPrice,   // pipeline.py 输出的 cardhoarder_price 字段，Cardhoarder（经Scryfall官方
+                        // default_cards 数据，按 mtgo_id 精确匹配）卖价，跟 GoatBots 价差大时
+                        // 在 note 里提一句哪家更便宜
   direction: "rise",   // 上涨候选必须带这个字段；下跌候选不用带（省略即默认下跌）
   verdict: "stabilizing" | "falling_knife" | "established" | "momentum" | "caution" | "new_set",
   note: "一两句话的研判，中文，供仪表盘详情页展示"
