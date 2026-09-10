@@ -137,9 +137,14 @@ verdict 的取值必须是上面枚举里的英文 key（仪表盘 CSS/文案按
   `card_images` 集合里已经有这个 mtgoId 的文档（data URI 路径，见下面兜底方案），说明图已经
   有了，不用重新下载上传。
 - 否则（新卡，或者 `primaryMtgoId` 变了——比如更便宜的新版本上线）：
-  1. `python fetch_card_image.py <primaryMtgoId> data/images/<primaryMtgoId>.jpg`
-     下载卡图到本地。如果脚本退出码是 1（打印 `NO_IMAGE`），说明 Scryfall 没收录这个印刷
-     版本的图，跳过卡图，不要中断整个流水线。
+  1. `python fetch_card_image.py <mtgoId1> [<mtgoId2> ...] <输出路径>`（脚本支持传多个候选
+     mtgo_id，按参数顺序依次尝试，第一个能拿到图的就用）：把这张卡的 `versions` 数组按价格
+     从低到高排序，取排好序的 mtgo_id 列表依次传进去，第一个参数是 `primaryMtgoId`，后面是
+     次便宜、再次便宜……以此类推。这样最低价版本 Scryfall 没收录图时会自动退而求其次用下一
+     便宜版本的图，而不是直接放弃这张卡的卡图。全部版本都试过还是没有图（脚本退出码 1，打印
+     `NO_IMAGE`）才真正跳过卡图字段，不要中断整个流水线。输出路径统一用
+     `data/images/<primaryMtgoId>.jpg`（不管最后用的是哪个版本的图，本地文件名和数据库
+     doc_id 都按 `primaryMtgoId` 走，方便仪表盘按卡片的 primaryMtgoId 统一查找）。
   2. **优先方案**：用 `Artifact` 工具的 `upload_asset`（`url` = 仪表盘 artifact 链接，
      `file_path` = 刚下载的图片路径）上传，拿到返回的 `{id, url}`，把 `imageUrl = url`、
      `imageAssetId = id` 填进这张卡的 `watchlist` 文档里。

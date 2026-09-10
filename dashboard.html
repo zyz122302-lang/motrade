@@ -548,7 +548,7 @@
       '<img class="card-art" id="detail-card-art" alt="' + escapeHtml(c.name) + '"' + (c.imageUrl ? ' src="' + c.imageUrl + '"' : ' hidden') + ' />' +
       '<div style="flex:1;"><h2>' + escapeHtml(c.name) + '</h2>' +
       '<div class="panel-note" style="margin:4px 0 0;">' + escapeHtml(c.rarity || '') + ' &middot; ' + versions.length + ' 个已知版本，价格取两个数据源里最低的一个' +
-      '<br>卡图是最低价版本的印刷，切换版本时画面不会跟着变</div>' +
+      '<br>卡图取自该卡已收录版本中的一张（优先最低价版本），切换版本时画面不会跟着变</div>' +
       '<div class="detail-price">' + fmtTix(c.bestPrice) + ' <span style="font-size:13px;color:var(--text-dim);">TIX (' + (SOURCE_LABEL[c.bestSource] || '') + ')</span></div></div></div>';
 
     if (versions.length > 1) {
