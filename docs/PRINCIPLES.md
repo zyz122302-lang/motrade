@@ -9,7 +9,14 @@
   `https://www.goatbots.com/download/prices/price-history.zip`)。
   该页面原文写明 "Here you can download our daily average sell prices for **your own project**"，
   每天 05:30 CET 更新一次，不需要高频抓取。
-- 使用 Scryfall 官方 API / bulk data（`https://api.scryfall.com`），仅用于赛制合法性、卡牌基础信息查询。
+- 使用 Scryfall 官方 API / bulk data（`https://api.scryfall.com`），仅用于赛制合法性、卡牌基础信息查询，
+  以及经 `default_cards` 数据（按 mtgo_id 匹配）获取 Cardhoarder 卖价，不直接抓 Cardhoarder 网站。
+- 使用 mtgo.com/decklists 官方赛事牌表（第一方数据，无 robots.txt 限制，数据直接内嵌在服务端渲染
+  HTML 里），统计 Modern/Legacy/Standard/Pauper 的每周使用率。
+- 使用 mtgtop8.com 线下 2 星以上赛事牌表作为使用率的补充数据源（无 robots.txt 限制，纯服务端渲染
+  HTML）；每个赛制只取星级最高的 3 场，控制请求量。
+- **不**抓取 mtggoldfish.com——其 robots.txt 明确写了 `User-agent: ClaudeBot` / `Disallow: /`，
+  是专门点名拒绝 Claude 爬虫的信号，即使技术上可行也不做。
 - **不**抓取 GoatBots 单卡页面上的买价（该数据被刻意渲染成 SVG 字形以防止抓取，是官方明确的反爬信号）。
 - **不**对 Cardhoarder 做任何形式的批量抓取（其买价同样只能通过官方 Collection Appraisal 工具交互式查询）。
 - **不**对 MTGO 客户端做任何自动化（截图识别、内存读取、模拟交易），因为：
