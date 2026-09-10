@@ -176,7 +176,7 @@
 <header class="top">
   <div>
     <h1>MOTrade Ledger</h1>
-    <div class="sub">MTGO 单卡交易台账 &middot; 数据源：GoatBots 官方每日卖价快照</div>
+    <div class="sub">MTGO 单卡交易台账 &middot; 卖价数据源：GoatBots 官方批量下载 + Cardhoarder（经 Scryfall 官方 API）</div>
   </div>
 </header>
 
@@ -201,12 +201,13 @@
     <p class="panel-note">
       卖价（ask）7日/30日/90日趋势里，接近90日低点或近7日大跌的候选。<strong>企稳</strong>指下跌动能已放缓，
       <strong>仍在下跌</strong>指跌势主要发生在最近7天，还没有止跌迹象——这个分类不是简单按跌幅排名，
-      是拿 7日跌幅占30日跌幅的比例做区分，比例低=已放缓，比例高=还在加速跌。点卡名看详情和价格曲线。
+      是拿 7日跌幅占30日跌幅的比例做区分，比例低=已放缓，比例高=还在加速跌。同时列出GoatBots和
+      Cardhoarder（经Scryfall官方数据）两家的卖价，价差大时可能有"去哪家买更便宜"的参考意义。点卡名看详情和价格曲线。
     </p>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>卡牌</th><th>研判</th><th class="num">卖价</th><th class="num">30日</th></tr></thead>
-        <tbody id="fall-body"><tr><td colspan="4" style="color:var(--text-dim);padding:14px 8px;">加载中…</td></tr></tbody>
+        <thead><tr><th>卡牌</th><th>研判</th><th class="num">GoatBots</th><th class="num">Cardhoarder</th><th class="num">30日</th></tr></thead>
+        <tbody id="fall-body"><tr><td colspan="5" style="color:var(--text-dim);padding:14px 8px;">加载中…</td></tr></tbody>
       </table>
     </div>
   </section>
@@ -214,14 +215,14 @@
   <!-- RISE VIEW -->
   <section class="view" id="view-rise">
     <p class="panel-note">
-      接近90日高点或近7日大涨的候选。<strong>注意</strong>：今天的上涨信号里，大多数是低价卡从接近0元的
-      价位回到正常区间，更像是bot库存/供给端的补价修正，不代表真实需求爆发——具体判断写在每张卡的详情里，
-      别看到百分比很大就当成强烈买入信号。
+      接近90日高点或近7日大涨的候选。<strong>注意</strong>：涨幅很大不一定代表真实需求——可能是低基数下
+      的百分比失真，也可能是新赛制合法性变化等真实原因，具体判断写在每张卡的详情里，别看到百分比大就当成
+      强烈买入信号。同时列出GoatBots和Cardhoarder两家卖价供参考。
     </p>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>卡牌</th><th>研判</th><th class="num">卖价</th><th class="num">30日</th></tr></thead>
-        <tbody id="rise-body"><tr><td colspan="4" style="color:var(--text-dim);padding:14px 8px;">加载中…</td></tr></tbody>
+        <thead><tr><th>卡牌</th><th>研判</th><th class="num">GoatBots</th><th class="num">Cardhoarder</th><th class="num">30日</th></tr></thead>
+        <tbody id="rise-body"><tr><td colspan="5" style="color:var(--text-dim);padding:14px 8px;">加载中…</td></tr></tbody>
       </table>
     </div>
   </section>
@@ -337,7 +338,7 @@
   function renderList(bodyId, items) {
     var body = document.getElementById(bodyId);
     if (!items.length) {
-      body.innerHTML = '<tr><td colspan="4" style="color:var(--text-dim);padding:14px 8px;">暂无数据，等待每日任务写入。</td></tr>';
+      body.innerHTML = '<tr><td colspan="5" style="color:var(--text-dim);padding:14px 8px;">暂无数据，等待每日任务写入。</td></tr>';
       return;
     }
     var sorted = items.slice().sort(function (a, b) {
@@ -352,6 +353,7 @@
         '<span class="set-chip">' + escapeHtml(c.set || '') + (c.foil ? ' F' : '') + '</span></td>' +
         '<td>' + verdictChip(c.verdict) + '</td>' +
         '<td class="num price">' + fmtTix(c.price) + '</td>' +
+        '<td class="num price">' + fmtTix(c.cardhoarderPrice) + '</td>' +
         '<td class="num">' + chgHtml(c.chg30d) + '</td>' +
         '</tr>';
     }).join('');
@@ -451,6 +453,7 @@
       '</div><div class="detail-price">' + fmtTix(c.price) + ' <span style="font-size:13px;color:var(--text-dim);">TIX</span></div></div>';
 
     html += '<div class="stat-grid">' +
+      '<div class="tile"><div class="label">Cardhoarder</div><div class="value">' + fmtTix(c.cardhoarderPrice) + '</div></div>' +
       '<div class="tile"><div class="label">7日</div><div class="value">' + chgHtml(c.chg7d) + '</div></div>' +
       '<div class="tile"><div class="label">30日</div><div class="value">' + chgHtml(c.chg30d) + '</div></div>' +
       '<div class="tile"><div class="label">90日低点</div><div class="value">' + fmtTix(c.low90) + '</div></div>' +

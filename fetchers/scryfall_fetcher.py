@@ -1,7 +1,9 @@
-"""Scryfall 官方 API 抓取：仅用于赛制合法性判断。
+"""Scryfall 官方 API 抓取：赛制合法性 + Cardhoarder 卖价（第二数据源）。
 
-使用官方 bulk data 端点（一次性拿全量 oracle 卡数据），符合 Scryfall 自己
-建议的"批量分析用 bulk data，不要逐卡查询"用法。
+使用官方 bulk data 端点，符合 Scryfall 自己建议的"批量分析用 bulk data，
+不要逐卡查询"用法。Scryfall 的 `default_cards` 数据集里每条记录（对应具体某个
+印刷版本）自带 `mtgo_id` 和 `prices.tix`（来自 Cardhoarder），可以直接用
+mtgo_id 跟 GoatBots 的数据精确匹配，不需要抓 Cardhoarder 自己的网站。
 """
 
 import gzip
@@ -43,4 +45,37 @@ def fetch_legality_by_name() -> dict:
             "modern": legalities.get("modern") == "legal",
             "legacy": legalities.get("legacy") == "legal",
         }
+    return result
+
+
+def fetch_cardhoarder_prices_by_mtgo_id() -> dict:
+    """返回 {mtgo_id(int): tix_price(float)}，来自 Scryfall `default_cards`
+    数据集里的 `prices.tix` 字段（Scryfall 标注该字段来源为 Cardhoarder）。
+
+    按具体印刷版本匹配（用 mtgo_id 做 key），跟 GoatBots 按 mtgo_id 记录
+    的卖价是同一个粒度，可以直接对照同一张卡在两个平台的价格。
+    """
+    resp = requests.get(SCRYFALL_BULK_DATA_API, headers=_HEADERS, timeout=30)
+    resp.raise_for_status()
+    entries = resp.json()["data"]
+    default_entry = next(e for e in entries if e["type"] == "default_cards")
+    jsonl_url = default_entry["jsonl_download_uri"]
+
+    data_resp = requests.get(jsonl_url, headers=_HEADERS, timeout=180, stream=True)
+    data_resp.raise_for_status()
+
+    raw = data_resp.content
+    if jsonl_url.endswith(".gz"):
+        raw = gzip.decompress(raw)
+
+    result = {}
+    for line in raw.decode("utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        card = json.loads(line)
+        mtgo_id = card.get("mtgo_id")
+        tix = (card.get("prices") or {}).get("tix")
+        if mtgo_id is not None and tix is not None:
+            result[int(mtgo_id)] = float(tix)
     return result

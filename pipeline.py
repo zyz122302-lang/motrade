@@ -81,6 +81,10 @@ def run():
             )
         } if candidate_ids else {}
 
+        print("[scryfall] fetching Cardhoarder tix prices (default_cards bulk) ...")
+        cardhoarder_prices = scryfall_fetcher.fetch_cardhoarder_prices_by_mtgo_id()
+        print(f"[scryfall] {len(cardhoarder_prices)} Cardhoarder prices loaded")
+
         results = []
         for mid in candidate_ids:
             price = today_prices.get(str(mid))
@@ -94,6 +98,7 @@ def run():
                 "set": info.get("cardset"),
                 "rarity": info.get("rarity"),
                 "price": price,
+                "cardhoarder_price": cardhoarder_prices.get(mid),
                 **ind,
             })
 
