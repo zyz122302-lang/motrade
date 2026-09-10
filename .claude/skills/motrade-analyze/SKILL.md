@@ -14,10 +14,23 @@ description: "生成 MOTrade 每日 MTGO 单卡分析报告并更新仪表盘。
 ## 每周赛事使用率（另一个独立的定时任务，不是这个技能负责触发）
 
 `metagame_pipeline.py` 从 MTGO 官方赛事牌表（mtgo.com/decklists，Challenge + 每日 League 5-0，
-Modern/Legacy/Standard/Pauper）统计每周各卡使用率，写进本地 `metagame_usage` 表。**这个脚本由
-另一个周度 routine（每周二跑一次）负责触发，不属于本技能的每日流程**，但本技能第 1 步的
-`pipeline.py` 会读取它写好的数据算出每张卡的 `formats`/`formatUsage`。如果周度任务还没跑过，
-`formats` 会是空数组，这是正常现象，不代表出错。
+Modern/Legacy/Standard/Pauper）统计每周各卡使用率。**这个脚本由另一个周度 routine（每周二跑
+一次）负责触发，不属于本技能的每日流程**，但本技能第 1 步会用到它产出的数据算出每张卡的
+`formats`/`formatUsage`。
+
+云端 routine 每次都是全新 checkout，本地 SQLite 不会跨次保留，所以持久化走 Artifact 仪表盘
+自己的数据库（`metagame_usage` 集合，不是 git 仓库——测试过云端 routine 没有 push 权限）：
+- **周度 routine** 跑完 `metagame_pipeline.py` 后，读 `data/metagame_export.json`（脚本自动
+  生成），对每个赛制用 `write_db`（`db_op: "set"`）写一个文档到 `metagame_usage` 集合，
+  doc_id 格式 `{format}-{week_of}`（如 `modern-2026-09-07`），内容就是导出文件里那个格式的
+  `{format, week_of, sample_size, usage}` 对象（补上 `format` 字段）。
+- **每日本技能**执行第 1 步之前，先用 `read_db`（`db_op: "query"`）查 `metagame_usage` 集合，
+  按 `format` 分别查最近 8 条（`where: [["format","==","modern"]], order_by: {field:"week_of",
+  direction:"desc"}, limit: 8`），把查到的文档拼成
+  `{format: [{week_of, sample_size, usage}, ...]}` 这个结构，写到本地
+  `data/metagame_import.json`，再跑 `pipeline.py`——它会自动把这个文件灌回本地 SQLite
+  （`import_metagame_usage_if_present`）。如果 `metagame_usage` 集合还是空的（周度任务还没跑过
+  一次），跳过这一步直接开始正常跑，`formats` 会是空数组，这是正常现象。
 
 ## 运行步骤
 
@@ -27,6 +40,9 @@ Modern/Legacy/Standard/Pauper）统计每周各卡使用率，写进本地 `meta
 cd "C:\Users\94243\OneDrive\桌面\MOTrade"
 python pipeline.py
 ```
+
+（记得先完成上面"每周赛事使用率"那一节里"每日本技能"要做的 read_db 桥接步骤，
+再跑这个命令，不然 formats 会是空的。）
 
 这一步会：
 - 抓取 GoatBots 官方卖价批量数据（今日快照 + 首次运行时的年度历史）
