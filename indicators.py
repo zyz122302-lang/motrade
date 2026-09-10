@@ -39,10 +39,15 @@ def compute(conn, mtgo_id: int, current_price: float) -> dict:
     near_low = (
         low_90 is not None and low_90 > 0 and current_price <= low_90 * 1.05
     )
-    big_drop_7d = False
+    near_high = (
+        high_90 is not None and current_price >= high_90 * 0.95
+    )
     chg_7d = pct(p7, current_price)
-    if chg_7d is not None and chg_7d <= -15:
-        big_drop_7d = True
+    big_drop_7d = chg_7d is not None and chg_7d <= -15
+    big_gain_7d = chg_7d is not None and chg_7d >= 15
+
+    ma7 = round(sum(prices_only[-7:]) / len(prices_only[-7:]), 2) if prices_only else None
+    ma30 = round(sum(prices_only[-30:]) / len(prices_only[-30:]), 2) if prices_only else None
 
     return {
         "chg_7d_pct": chg_7d,
@@ -51,6 +56,10 @@ def compute(conn, mtgo_id: int, current_price: float) -> dict:
         "low_90d": low_90,
         "high_90d": high_90,
         "near_90d_low": near_low,
+        "near_90d_high": near_high,
         "big_drop_7d": big_drop_7d,
+        "big_gain_7d": big_gain_7d,
+        "ma7": ma7,
+        "ma30": ma30,
         "days_of_history": len(prices_only),
     }

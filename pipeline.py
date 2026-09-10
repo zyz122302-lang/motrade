@@ -100,12 +100,17 @@ def run():
         signals = [r for r in results if r["near_90d_low"] or r["big_drop_7d"]]
         signals.sort(key=lambda r: (r["chg_30d_pct"] if r["chg_30d_pct"] is not None else 0))
 
+        risers = [r for r in results if r["near_90d_high"] or r["big_gain_7d"]]
+        risers.sort(key=lambda r: -(r["chg_30d_pct"] if r["chg_30d_pct"] is not None else 0))
+
         output = {
             "asOf": price_date,
             "generatedAt": datetime.now().isoformat(),
             "candidateCount": len(results),
             "signalCount": len(signals),
+            "riserCount": len(risers),
             "signals": signals[:40],
+            "risers": risers[:40],
             "watchlist": sorted(results, key=lambda r: -(r["price"] or 0))[:60],
         }
         DATA_DIR.mkdir(parents=True, exist_ok=True)

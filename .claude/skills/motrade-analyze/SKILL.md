@@ -28,11 +28,19 @@ python pipeline.py
 
 ### 2. 读取输出，套用策略做研判
 
-读取 `data/latest_watchlist.json` 的 `signals` 数组。对每一张候选卡，参考
-`strategies/*.yaml` 里的四条策略描述（企稳 / 仍在下跌 / 新卡衰减 / 老卡折价），
-判断这张卡属于哪一类，并结合你自己对 Modern/Legacy 赛制环境的了解，
-给出简短研判。不确定的信息（比如某张卡是否真的还在被广泛使用）要明确标注是"数据面"
-还是"情报面"（后者是你的定性判断，不是抓取来的事实）。
+读取 `data/latest_watchlist.json` 的 `signals`（下跌候选）和 `risers`（上涨候选）两个数组。
+对每一张候选卡，参考 `strategies/*.yaml` 里的五条策略描述（企稳 falling_knife 仍在下跌 /
+new_set_decay 新卡衰减 / established_staple_dip 老卡折价 / momentum_up 上涨动量），
+判断这张卡属于哪一类，并结合你自己对 Modern/Legacy 赛制环境的了解，给出简短研判。
+不确定的信息（比如某张卡是否真的还在被广泛使用）要明确标注是"数据面"还是"情报面"
+（后者是你的定性判断，不是抓取来的事实）。
+
+**分类不要只看跌幅/涨幅排名，要用比值判断动能方向**：`|chg_7d_pct| / |chg_30d_pct|`
+比值高（比如 >0.6）说明大部分变动发生在最近一周，还在加速中（跌的归 falling_knife，
+不是 stabilizing；涨的要提醒追高风险）；比值低说明变动已经发生一段时间、近期趋缓，
+才是真正的 stabilizing / established 候选。另外注意：`chg_30d_pct` 在基准价格接近 0 的
+低价卡上会出现几百甚至几千个百分点的失真（比如从 $0.06 涨到 $3.8 就是 +6000%），
+这种情况要在 note 里说明是"低基数补价修正"，不要当成真实的需求信号。
 
 每张卡的研判尽量精炼成这几部分（对应原项目的四段式 dashboard，但不需要字段名完全一致）：
 - **结论**：一句话，属于哪个策略分类 + 要不要现在关注
@@ -44,26 +52,37 @@ python pipeline.py
 
 ### 3. 挑选本轮真正值得推送的候选（不要全量塞进仪表盘）
 
-从研判结果里，只挑"企稳"或"老卡折价"这两类、且你认为确实值得用户看一眼的卡（建议 10-20 张），
-准备写入仪表盘。"仍在下跌"和"新卡衰减"这两类默认不写入仪表盘（避免噪音），除非某张卡的情况
-特别值得单独提醒。
+下跌候选里只挑 `falling_knife`（仍在下跌，但值得关注/警示）和 `established`（企稳或老卡折价）
+这两类；上涨候选里只挑 `momentum`（真实动能）和 `caution`（数值异常但值得记录，比如低基数补价）
+——每个方向各挑 8-15 张你认为真正值得展示的，不要为了凑数硬塞噪音（比如纯 EDH/Commander
+需求驱动、和 Modern/Legacy 竞技关系不大的卡，可以直接不选或标 caution 并说明原因）。
 
 ### 4. 写入仪表盘数据库
 
-用 Artifact 工具的 `write_db`（`db_op: "batch"`）更新 `watchlist` 集合，目标 artifact：
-`https://claude.ai/code/artifact/1e6623c1-9314-4778-bb5a-83f689947e9e`
+目标 artifact：`https://claude.ai/code/artifact/1e6623c1-9314-4778-bb5a-83f689947e9e`
 
-每个文档字段建议：
+**a) `watchlist` 集合**（doc_id 用 mtgo_id 字符串），用 `write_db`（`db_op: "batch"`）写入：
 ```
 {
   name, set, rarity, foil, price, asOf,
-  chg7d, chg30d, low90, nearLow, bigDrop7d,
-  verdict: "企稳" | "老卡折价" | ...,   // 新增：你的分类
-  note: "一两句话的研判，供仪表盘展示"    // 新增：你的简短研判
+  chg7d, chg30d, low90, ma7, ma30,
+  direction: "rise",   // 上涨候选必须带这个字段；下跌候选不用带（省略即默认下跌）
+  verdict: "stabilizing" | "falling_knife" | "established" | "momentum" | "caution" | "new_set",
+  note: "一两句话的研判，中文，供仪表盘详情页展示"
 }
 ```
+verdict 的取值必须是上面枚举里的英文 key（仪表盘 CSS/文案按这几个 key 渲染），不要自己发明新词。
+
+**b) `price_history` 集合**（doc_id 同样用 mtgo_id 字符串），每张写入仪表盘的卡都要配一份：
+```
+{ series: [[date_str, price], ...] }   // 从 storage.price_history_for(conn, mtgo_id) 取，
+                                          // 按需抽稀到 20-30 个点即可（平段可以跳过中间重复值），
+                                          // 单文档不要超过几十 KB
+```
+仪表盘详情页会用这份数据画价格曲线 + MA7/MA30（MA 由页面前端从 series 现算，不用额外传）。
+
 写入前建议先 `read_db`（`db_op: "list"`, collection `watchlist`）看当前有哪些文档，
-把这次不再入选的旧文档删掉，避免仪表盘堆积过期信号。
+把这次不再入选的旧文档删掉（连同它对应的 `price_history` 文档一起删），避免仪表盘堆积过期信号。
 
 ### 5. 通知（可选）
 
