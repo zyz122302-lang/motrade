@@ -91,6 +91,16 @@
 
   .panel-note { color: var(--text-dim); font-size: 12.5px; margin: 0 0 14px; line-height: 1.55; }
 
+  .news-strip {
+    border: 1px solid var(--line); border-left: 3px solid var(--gold); border-radius: 8px;
+    padding: 10px 14px; margin-bottom: 16px; background: var(--paper-raise);
+  }
+  .news-strip-head { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-dim); margin-bottom: 6px; }
+  .news-item { font-size: 12.5px; line-height: 1.6; }
+  .news-item .news-date { font-family: 'IBM Plex Mono', monospace; color: var(--text-dim); margin-right: 6px; }
+  .news-item .news-bad { color: var(--loss); font-weight: 600; }
+  .news-item .news-good { color: var(--profit); font-weight: 600; }
+
   table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
   th {
     text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em;
@@ -215,6 +225,11 @@
     <div class="tile"><div class="label">当前持仓</div><div class="value mono" id="stat-holdings">—</div></div>
     <div class="tile"><div class="label">未实现盈亏 (TIX)</div><div class="value mono" id="stat-pl">—</div></div>
     <div class="tile"><div class="label">数据日期</div><div class="value mono" id="stat-asof">—</div></div>
+  </div>
+
+  <div id="news-strip" class="news-strip" hidden>
+    <div class="news-strip-head">情报速递 &middot; 官方禁限赛制变动</div>
+    <div id="news-strip-body"></div>
   </div>
 
   <!-- FALL VIEW -->
@@ -453,6 +468,23 @@
     document.getElementById('stat-pl').textContent = anyPriced ? (totalPl >= 0 ? '+' : '') + fmtTix(totalPl) : '—';
   }
 
+  function renderNewsStrip(events) {
+    var strip = document.getElementById('news-strip');
+    var body = document.getElementById('news-strip-body');
+    if (!events.length) { strip.hidden = true; return; }
+    var sorted = events.slice().sort(function (a, b) { return (b.date || '').localeCompare(a.date || ''); }).slice(0, 5);
+    body.innerHTML = sorted.map(function (e) {
+      var text = e.summary || (
+        (e.added && e.added.length ? '新增：' + e.added.join('、') : '') +
+        (e.removed && e.removed.length ? (e.added && e.added.length ? '；' : '') + '解除：' + e.removed.join('、') : '')
+      );
+      return '<div class="news-item"><span class="news-date">' + escapeHtml(e.date || '') + '</span>' +
+        '<span class="mono" style="color:var(--text-dim);margin-right:6px;">[' + escapeHtml(e.format || '') + ']</span>' +
+        escapeHtml(text) + '</div>';
+    }).join('');
+    strip.hidden = false;
+  }
+
   function renderObs(items) {
     var tbl = document.getElementById('obs-table');
     var empty = document.getElementById('obs-empty');
@@ -631,6 +663,11 @@
     if (!window.claude || !window.claude.use) { renderList('fall-body', [], 'fall'); renderList('rise-body', [], 'rise'); return; }
     db = await window.claude.use('db');
     if (!db) { renderList('fall-body', [], 'fall'); renderList('rise-body', [], 'rise'); return; }
+
+    db.collection('news_events').onSnapshot(function (snap) {
+      var events = snap.docs.map(function (d) { return d.data(); });
+      renderNewsStrip(events);
+    }, function () { renderNewsStrip([]); });
 
     db.collection('watchlist').onSnapshot(function (snap) {
       var all = snap.docs.map(function (d) {

@@ -37,6 +37,50 @@ MTGTop8 线下 2 星以上赛事牌表（只做 Modern/Legacy，每个赛制取�
   `metagame_usage` 集合还是空的（metagame routine 还没跑过一次），跳过这一步直接开始正常跑，
   `formats` 会是空数组，这是正常现象。
 
+## 官方禁限赛制公告监控（利空/利好情报，本技能自己负责，每天都跑）
+
+价格和使用率是"技术面"，禁限赛制变化和新系列上线是"情报面"里最硬的两类利空/利好信号——
+禁一张卡=这张卡的竞技需求基本归零（利空），解禁=需求可能回归（利好），这两种事件经常先于
+价格变化出现，或者是价格突变的真正原因（比如之前 Phlage 被禁 Modern 导致它持续下跌）。
+
+**数据源**：`https://magic.wizards.com/en/banned-restricted-list`——官方当前禁限名单页，
+纯服务端渲染 HTML，`robots.txt` 无限制。**不**去猜测/遍历具体某次公告文章的 URL（那属于
+"撞库"而不是访问公开数据，本项目不做），只抓这一个稳定的"当前状态"页面，靠每天的快照差异
+发现变化，不需要知道公告是哪天发的。
+
+步骤：
+1. `python check_banned_restricted.py`——抓取当前禁限名单，写到
+   `data/banned_restricted_current.json`（结构 `{format: [card_name, ...]}`）。
+2. `read_db`（`db_op: "get"`，collection `site_meta`，doc_id `banned_restricted_snapshot`）
+   读昨天的快照。如果这个文档不存在（第一次跑），跳过对比，直接把今天的快照写进去做基线，
+   不生成事件。
+3. 如果昨天的快照存在，用 `fetchers/wotc_news_fetcher.py` 里的
+   `diff_banned_restricted(previous, current)` 函数算出差异（按格式返回
+   `{format: {"added": [...], "removed": [...]}}`，`added` = 新增禁/限 = 利空，
+   `removed` = 解除禁/限 = 利好）。可以直接 `python -c` 调用这个函数，传入两份 JSON。
+4. 对每个有变化的格式，判断变化的卡是否跟本轮候选池、或者仪表盘现有 `watchlist` 文档里的卡
+   同名：
+   - 如果是，**这条信息优先于其他一切情报**写进那张卡本轮的 `note` 里（比如"该卡已于近日被
+     官方公告禁用于 Modern，利空，需求会大幅下滑"），并相应调整 `verdict`（新增禁令通常应该
+     标 `falling_knife` 或至少 `caution`，不要标 `momentum`；解除禁令通常是 `momentum` 候选）。
+   - 不管是否命中候选池，都要用 `write_db`（`db_op: "set"`）写一条 `news_events` 集合的文档，
+     doc_id 用 `{date}-br-{format的slug}`（如 `2026-09-11-br-modern`），内容：
+     ```
+     { date, type: "banned_restricted", format, added: [...], removed: [...],
+       summary: "一句话中文说明，比如：Modern 新增禁用 X 张卡（含 XX），Legacy 解除禁用 Y" }
+     ```
+     这条会在仪表盘顶部的"情报速递"条里显示，即使没命中当前候选池，用户也能看到。
+5. 把 `data/banned_restricted_current.json` 的内容 `write_db`（`db_op: "set"`）覆盖写回
+   `site_meta/banned_restricted_snapshot`，作为明天对比的新基线（不管今天有没有变化都要写，
+   保持基线是"昨天"而不是越来越旧）。
+
+**MTGO 新系列上线 / 维护窗口（供给面信号，定性判断，不是确定性代码）**：新系列上线会集中
+释放某些老卡的供给（拆包/重印），是常见的"价格下跌但不是需求下滑"的原因（比如之前 Godless
+Shrine、Past in Flames 的案例）。写研判前如果看到某张卡在最近几周内有明显的、集中在某个新
+系列印刷版本上的价格异动，可以顺手 `WebSearch` 一下"MTGO weekly announcement <本周日期>"
+或者"<系列名> MTGO release date"确认是不是最近有新系列/重印上线，跟前面"异常涨跌必须
+WebSearch 核实原因"的规则是同一件事，不用另外单独跑一遍。
+
 ## 运行步骤
 
 ### 1. 跑数据管道（确定性代码，不需要 LLM）

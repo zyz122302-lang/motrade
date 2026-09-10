@@ -15,6 +15,9 @@
   HTML 里），统计 Modern/Legacy/Standard/Pauper 的每周使用率。
 - 使用 mtgtop8.com 线下 2 星以上赛事牌表作为使用率的补充数据源（无 robots.txt 限制，纯服务端渲染
   HTML）；每个赛制只取星级最高的 3 场，控制请求量。
+- 使用 `magic.wizards.com/en/banned-restricted-list`——官方当前禁限赛制名单页（第一方数据，
+  `robots.txt` 无限制，纯服务端渲染 HTML），作为"情报面"利空/利好信号来源，每天抓一次当前状态
+  快照做前后对比，**不**猜测/遍历具体公告文章的 URL（那属于撞库，不做）。
 - **不**抓取 mtggoldfish.com——其 robots.txt 明确写了 `User-agent: ClaudeBot` / `Disallow: /`，
   是专门点名拒绝 Claude 爬虫的信号，即使技术上可行也不做。
 - **不**抓取 GoatBots 单卡页面上的买价（该数据被刻意渲染成 SVG 字形以防止抓取，是官方明确的反爬信号）。
