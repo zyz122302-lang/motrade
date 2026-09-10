@@ -499,7 +499,12 @@
     if (!db) { renderList('fall-body', []); renderList('rise-body', []); return; }
 
     db.collection('watchlist').onSnapshot(function (snap) {
-      var all = snap.docs.map(function (d) { var v = d.data(); v.id = d.id; return v; });
+      var all = snap.docs.map(function (d) {
+        var v = {}; var src = d.data();
+        for (var k in src) v[k] = src[k];
+        v.id = d.id;
+        return v;
+      });
       fallItems = all.filter(function (c) { return c.direction !== 'rise'; });
       riseItems = all.filter(function (c) { return c.direction === 'rise'; });
       document.getElementById('stat-fall').textContent = String(fallItems.length);
@@ -512,7 +517,12 @@
     }, function () { renderList('fall-body', []); renderList('rise-body', []); });
 
     db.collection('portfolio').onSnapshot(function (snap) {
-      holdingItems = snap.docs.map(function (d) { var v = d.data(); v.id = d.id; return v; });
+      holdingItems = snap.docs.map(function (d) {
+        var v = {}; var src = d.data();
+        for (var k in src) v[k] = src[k];
+        v.id = d.id;
+        return v;
+      });
       renderHoldings();
     }, function () { renderHoldings(); });
 
