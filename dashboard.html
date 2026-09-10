@@ -158,6 +158,14 @@
   .detail-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; flex-wrap: wrap; margin-bottom: 4px; }
   .detail-head h2 { font-size: 22px; }
   .detail-price { font-size: 26px; font-weight: 600; font-family: 'IBM Plex Mono', monospace; }
+  .version-picker { display: flex; gap: 6px; flex-wrap: wrap; margin: 12px 0 4px; }
+  .version-btn {
+    background: var(--paper-raise); border: 1px solid var(--line); border-radius: 20px;
+    color: var(--text-dim); font-size: 12px; font-family: 'IBM Plex Mono', monospace;
+    padding: 5px 12px; cursor: pointer;
+  }
+  .version-btn:hover { border-color: var(--gold-soft); }
+  .version-btn.active { background: var(--gold); border-color: var(--gold); color: #1c1305; font-weight: 600; }
   .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin: 14px 0; }
   .stat-grid .tile { background: var(--paper-raise); padding: 10px 12px; }
   .stat-grid .label { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-dim); margin-bottom: 4px; }
@@ -201,13 +209,14 @@
     <p class="panel-note">
       卖价（ask）7日/30日/90日趋势里，接近90日低点或近7日大跌的候选。<strong>企稳</strong>指下跌动能已放缓，
       <strong>仍在下跌</strong>指跌势主要发生在最近7天，还没有止跌迹象——这个分类不是简单按跌幅排名，
-      是拿 7日跌幅占30日跌幅的比例做区分，比例低=已放缓，比例高=还在加速跌。同时列出GoatBots和
-      Cardhoarder（经Scryfall官方数据）两家的卖价，价差大时可能有"去哪家买更便宜"的参考意义。点卡名看详情和价格曲线。
+      是拿 7日跌幅占30日跌幅的比例做区分，比例低=已放缓，比例高=还在加速跌。价格取该卡所有版本
+      （不同系列、foil/非foil）在 GoatBots / Cardhoarder 两个数据源里的最低价，点卡名进详情页可以
+      切换看每个版本各自的走势。
     </p>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>卡牌</th><th>研判</th><th class="num">GoatBots</th><th class="num">Cardhoarder</th><th class="num">30日</th></tr></thead>
-        <tbody id="fall-body"><tr><td colspan="5" style="color:var(--text-dim);padding:14px 8px;">加载中…</td></tr></tbody>
+        <thead><tr><th>卡牌</th><th>研判</th><th class="num">最低价</th><th class="num">30日</th></tr></thead>
+        <tbody id="fall-body"><tr><td colspan="4" style="color:var(--text-dim);padding:14px 8px;">加载中…</td></tr></tbody>
       </table>
     </div>
   </section>
@@ -217,12 +226,12 @@
     <p class="panel-note">
       接近90日高点或近7日大涨的候选。<strong>注意</strong>：涨幅很大不一定代表真实需求——可能是低基数下
       的百分比失真，也可能是新赛制合法性变化等真实原因，具体判断写在每张卡的详情里，别看到百分比大就当成
-      强烈买入信号。同时列出GoatBots和Cardhoarder两家卖价供参考。
+      强烈买入信号。价格同样取所有版本、两个数据源里的最低价。
     </p>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>卡牌</th><th>研判</th><th class="num">GoatBots</th><th class="num">Cardhoarder</th><th class="num">30日</th></tr></thead>
-        <tbody id="rise-body"><tr><td colspan="5" style="color:var(--text-dim);padding:14px 8px;">加载中…</td></tr></tbody>
+        <thead><tr><th>卡牌</th><th>研判</th><th class="num">最低价</th><th class="num">30日</th></tr></thead>
+        <tbody id="rise-body"><tr><td colspan="4" style="color:var(--text-dim);padding:14px 8px;">加载中…</td></tr></tbody>
       </table>
     </div>
   </section>
@@ -330,15 +339,16 @@
     var needle = (name || '').trim().toLowerCase();
     var all = fallItems.concat(riseItems);
     for (var i = 0; i < all.length; i++) {
-      if ((all[i].name || '').trim().toLowerCase() === needle) return all[i].price;
+      if ((all[i].name || '').trim().toLowerCase() === needle) return all[i].bestPrice;
     }
     return null;
   }
+  var SOURCE_LABEL = { goatbots: 'GoatBots', cardhoarder: 'Cardhoarder' };
 
   function renderList(bodyId, items) {
     var body = document.getElementById(bodyId);
     if (!items.length) {
-      body.innerHTML = '<tr><td colspan="5" style="color:var(--text-dim);padding:14px 8px;">暂无数据，等待每日任务写入。</td></tr>';
+      body.innerHTML = '<tr><td colspan="4" style="color:var(--text-dim);padding:14px 8px;">暂无数据，等待每日任务写入。</td></tr>';
       return;
     }
     var sorted = items.slice().sort(function (a, b) {
@@ -348,12 +358,12 @@
     if (asof) document.getElementById('stat-asof').textContent = asof;
     body.innerHTML = sorted.map(function (c) {
       var rarityClass = 'rarity-' + (c.rarity || 'Common');
+      var versionNote = (c.versionCount > 1 ? c.versionCount + ' 个版本 &middot; ' : '') + (SOURCE_LABEL[c.bestSource] || '');
       return '<tr class="card-row ' + rarityClass + '" data-id="' + c.id + '">' +
         '<td class="card-name"><span class="rarity-dot"></span>' + escapeHtml(c.name) +
-        '<span class="set-chip">' + escapeHtml(c.set || '') + (c.foil ? ' F' : '') + '</span></td>' +
+        '<div style="font-size:10.5px;color:var(--text-dim);margin-top:2px;">' + versionNote + '</div></td>' +
         '<td>' + verdictChip(c.verdict) + '</td>' +
-        '<td class="num price">' + fmtTix(c.price) + '</td>' +
-        '<td class="num price">' + fmtTix(c.cardhoarderPrice) + '</td>' +
+        '<td class="num price">' + fmtTix(c.bestPrice) + '</td>' +
         '<td class="num">' + chgHtml(c.chg30d) + '</td>' +
         '</tr>';
     }).join('');
@@ -438,6 +448,38 @@
       '</svg>';
   }
 
+  function loadChartFor(mtgoId) {
+    var container = document.getElementById('chart-container');
+    if (!container) return;
+    container.innerHTML = '加载价格曲线…';
+    if (!db) { container.innerHTML = '<div class="chart-empty">数据库不可用</div>'; return; }
+    db.collection('price_history').doc(String(mtgoId)).get().then(function (snap) {
+      var c2 = document.getElementById('chart-container');
+      if (!c2) return;
+      if (!snap.exists) { c2.innerHTML = '<div class="chart-empty">还没有这个版本的历史曲线数据</div>'; return; }
+      c2.innerHTML = buildChart((snap.data() || {}).series || []);
+    }).catch(function () {
+      var c2 = document.getElementById('chart-container');
+      if (c2) c2.innerHTML = '<div class="chart-empty">加载曲线失败</div>';
+    });
+  }
+
+  function selectVersion(versions, mtgoId) {
+    var v = versions.filter(function (x) { return String(x.mtgoId) === String(mtgoId); })[0];
+    if (!v) return;
+    document.querySelectorAll('.version-btn').forEach(function (b) {
+      b.classList.toggle('active', String(b.getAttribute('data-mtgo-id')) === String(mtgoId));
+    });
+    document.getElementById('stat-goatbots').textContent = fmtTix(v.goatbotsPrice);
+    document.getElementById('stat-cardhoarder').textContent = fmtTix(v.cardhoarderPrice);
+    document.getElementById('stat-chg7').innerHTML = chgHtml(v.chg7d);
+    document.getElementById('stat-chg30').innerHTML = chgHtml(v.chg30d);
+    document.getElementById('stat-low90').textContent = fmtTix(v.low90);
+    document.getElementById('stat-ma7').textContent = fmtTix(v.ma7);
+    document.getElementById('stat-ma30').textContent = fmtTix(v.ma30);
+    loadChartFor(mtgoId);
+  }
+
   function openDetail(id, fromView) {
     currentDetailReturnView = fromView;
     switchView('detail');
@@ -447,42 +489,50 @@
     var c = all.filter(function (i) { return i.id === id; })[0];
     if (!c) { body.innerHTML = '<p class="panel-note">没找到这张卡。</p>'; return; }
 
+    var versions = c.versions || [];
+    var primaryId = c.primaryMtgoId;
+
     var html = '<div class="detail-head"><div>' +
-      '<h2>' + escapeHtml(c.name) + '<span class="set-chip">' + escapeHtml(c.set || '') + (c.foil ? ' F' : '') + '</span></h2>' +
-      '<div class="panel-note" style="margin:4px 0 0;">' + escapeHtml(c.rarity || '') + '</div>' +
-      '</div><div class="detail-price">' + fmtTix(c.price) + ' <span style="font-size:13px;color:var(--text-dim);">TIX</span></div></div>';
+      '<h2>' + escapeHtml(c.name) + '</h2>' +
+      '<div class="panel-note" style="margin:4px 0 0;">' + escapeHtml(c.rarity || '') + ' &middot; ' + versions.length + ' 个已知版本，价格取两个数据源里最低的一个</div>' +
+      '</div><div class="detail-price">' + fmtTix(c.bestPrice) + ' <span style="font-size:13px;color:var(--text-dim);">TIX (' + (SOURCE_LABEL[c.bestSource] || '') + ')</span></div></div>';
+
+    if (versions.length > 1) {
+      html += '<div class="version-picker">' + versions.map(function (v) {
+        var vp = v.goatbotsPrice !== null && v.goatbotsPrice !== undefined
+          ? (v.cardhoarderPrice !== null && v.cardhoarderPrice !== undefined ? Math.min(v.goatbotsPrice, v.cardhoarderPrice) : v.goatbotsPrice)
+          : v.cardhoarderPrice;
+        return '<button class="version-btn' + (String(v.mtgoId) === String(primaryId) ? ' active' : '') + '" data-mtgo-id="' + v.mtgoId + '">' +
+          escapeHtml(v.set || '?') + (v.foil ? ' F' : '') + ' &middot; ' + fmtTix(vp) + '</button>';
+      }).join('') + '</div>';
+    }
 
     html += '<div class="stat-grid">' +
-      '<div class="tile"><div class="label">Cardhoarder</div><div class="value">' + fmtTix(c.cardhoarderPrice) + '</div></div>' +
-      '<div class="tile"><div class="label">7日</div><div class="value">' + chgHtml(c.chg7d) + '</div></div>' +
-      '<div class="tile"><div class="label">30日</div><div class="value">' + chgHtml(c.chg30d) + '</div></div>' +
-      '<div class="tile"><div class="label">90日低点</div><div class="value">' + fmtTix(c.low90) + '</div></div>' +
-      '<div class="tile"><div class="label">MA7</div><div class="value">' + fmtTix(c.ma7) + '</div></div>' +
-      '<div class="tile"><div class="label">MA30</div><div class="value">' + fmtTix(c.ma30) + '</div></div>' +
+      '<div class="tile"><div class="label">GoatBots</div><div class="value" id="stat-goatbots">—</div></div>' +
+      '<div class="tile"><div class="label">Cardhoarder</div><div class="value" id="stat-cardhoarder">—</div></div>' +
+      '<div class="tile"><div class="label">7日</div><div class="value" id="stat-chg7">—</div></div>' +
+      '<div class="tile"><div class="label">30日</div><div class="value" id="stat-chg30">—</div></div>' +
+      '<div class="tile"><div class="label">90日低点</div><div class="value" id="stat-low90">—</div></div>' +
+      '<div class="tile"><div class="label">MA7</div><div class="value" id="stat-ma7">—</div></div>' +
+      '<div class="tile"><div class="label">MA30</div><div class="value" id="stat-ma30">—</div></div>' +
       '</div>';
 
     html += '<div class="note-box">' + verdictChip(c.verdict) +
       '<div style="margin-top:8px;">' + escapeHtml(c.note || '暂无研判说明，等待每日分析任务生成。') + '</div></div>';
 
     html += '<div class="chart-wrap"><div class="chart-legend">' +
-      '<span><span class="sw" style="background:var(--gold);"></span>卖价</span>' +
+      '<span><span class="sw" style="background:var(--gold);"></span>卖价（当前选中版本，GoatBots历史）</span>' +
       '<span><span class="sw" style="background:var(--profit);"></span>MA7</span>' +
       '<span><span class="sw" style="background:var(--text-dim);border-top:1px dashed var(--text-dim);height:0;"></span>MA30</span>' +
       '</div><div id="chart-container">加载价格曲线…</div></div>';
 
     body.innerHTML = html;
 
-    if (!db) { document.getElementById('chart-container').innerHTML = '<div class="chart-empty">数据库不可用</div>'; return; }
-    db.collection('price_history').doc(String(id)).get().then(function (snap) {
-      var container = document.getElementById('chart-container');
-      if (!container) return;
-      if (!snap.exists) { container.innerHTML = '<div class="chart-empty">还没有这张卡的历史曲线数据</div>'; return; }
-      var data = snap.data();
-      container.innerHTML = buildChart(data.series || []);
-    }).catch(function () {
-      var container = document.getElementById('chart-container');
-      if (container) container.innerHTML = '<div class="chart-empty">加载曲线失败</div>';
+    document.querySelectorAll('.version-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () { selectVersion(versions, btn.getAttribute('data-mtgo-id')); });
     });
+
+    selectVersion(versions, primaryId);
   }
 
   async function init() {
