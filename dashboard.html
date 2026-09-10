@@ -545,10 +545,10 @@
     var primaryId = c.primaryMtgoId;
 
     var html = '<div class="detail-head">' +
-      (c.imageUrl ? '<img class="card-art" src="' + c.imageUrl + '" alt="' + escapeHtml(c.name) + '" />' : '') +
+      '<img class="card-art" id="detail-card-art" alt="' + escapeHtml(c.name) + '"' + (c.imageUrl ? ' src="' + c.imageUrl + '"' : ' hidden') + ' />' +
       '<div style="flex:1;"><h2>' + escapeHtml(c.name) + '</h2>' +
       '<div class="panel-note" style="margin:4px 0 0;">' + escapeHtml(c.rarity || '') + ' &middot; ' + versions.length + ' 个已知版本，价格取两个数据源里最低的一个' +
-      (c.imageUrl ? '<br>卡图是最低价版本的印刷，切换版本时画面不会跟着变' : '') + '</div>' +
+      '<br>卡图是最低价版本的印刷，切换版本时画面不会跟着变</div>' +
       '<div class="detail-price">' + fmtTix(c.bestPrice) + ' <span style="font-size:13px;color:var(--text-dim);">TIX (' + (SOURCE_LABEL[c.bestSource] || '') + ')</span></div></div></div>';
 
     if (versions.length > 1) {
@@ -587,6 +587,20 @@
     });
 
     selectVersion(versions, primaryId);
+    if (!c.imageUrl) loadCardArt(primaryId);
+  }
+
+  function loadCardArt(mtgoId) {
+    if (!db) return;
+    db.collection('card_images').doc(String(mtgoId)).get().then(function (snap) {
+      if (!snap.exists) return;
+      var img = document.getElementById('detail-card-art');
+      if (!img) return;
+      var dataUri = (snap.data() || {}).dataUri;
+      if (!dataUri) return;
+      img.src = dataUri;
+      img.hidden = false;
+    }).catch(function () {});
   }
 
   async function init() {

@@ -133,20 +133,32 @@ verdict 的取值必须是上面枚举里的英文 key（仪表盘 CSS/文案按
 
 **卡图（每张入选卡都要配）**：写入前先 `read_db`（`db_op: "get"`）看这张卡在 `watchlist`
 集合里已有的文档：
-- 如果已有文档的 `primaryMtgoId` 跟这次一样、且带着 `imageAssetId`，直接复用它的
-  `imageUrl`/`imageAssetId`，不用重新下载上传（省 Scryfall 请求和 Artifact 资源配额）。
+- 如果已有文档的 `primaryMtgoId` 跟这次一样、且带着 `imageAssetId`（assets 路径）或者
+  `card_images` 集合里已经有这个 mtgoId 的文档（data URI 路径，见下面兜底方案），说明图已经
+  有了，不用重新下载上传。
 - 否则（新卡，或者 `primaryMtgoId` 变了——比如更便宜的新版本上线）：
   1. `python fetch_card_image.py <primaryMtgoId> data/images/<primaryMtgoId>.jpg`
      下载卡图到本地。如果脚本退出码是 1（打印 `NO_IMAGE`），说明 Scryfall 没收录这个印刷
-     版本的图，跳过卡图字段，不要中断整个流水线。
-  2. 用 `Artifact` 工具的 `upload_asset`（`url` = 仪表盘 artifact 链接，`file_path` =
-     刚下载的图片路径）上传，拿到返回的 `{id, url}`。
-  3. 把 `imageUrl = url`、`imageAssetId = id` 填进这张卡的文档里。
+     版本的图，跳过卡图，不要中断整个流水线。
+  2. **优先方案**：用 `Artifact` 工具的 `upload_asset`（`url` = 仪表盘 artifact 链接，
+     `file_path` = 刚下载的图片路径）上传，拿到返回的 `{id, url}`，把 `imageUrl = url`、
+     `imageAssetId = id` 填进这张卡的 `watchlist` 文档里。
+  3. **兜底方案（`upload_asset`/`list_assets` 这类 asset 相关 action 在当前环境不可用时）**：
+     把图片文件 base64 编码成 `data:image/jpeg;base64,<...>` 格式的 data URI（单张图一般
+     100-300KB，编码后一般在几百 KB，远低于单个文档 1MB 上限，不用担心超限），写入
+     `card_images` 集合，doc_id 用 `String(primaryMtgoId)`，文档内容 `{dataUri: "..."}`
+     （多张一起写时注意 `write_db` 单次 batch 请求体上限 1MB，建议每批 4 张左右）。这种情况下
+     **不要**往 `watchlist` 文档里塞 `imageUrl`/`imageAssetId` 字段——仪表盘详情页会在没有
+     `imageUrl` 时自动按 `primaryMtgoId` 去 `card_images` 集合里找对应的图（`loadCardArt`
+     函数），两条路径都支持，不需要在 SKILL 这边判断走哪条，只要 `upload_asset` 报错
+     （比如报 "Invalid input" 提示这个 action 不在允许列表里）就直接切到兜底方案即可。
 
 **清理旧卡的图**：本节前面"写入前建议先 `read_db`...把这次不再入选的旧文档删掉"那一步，
-删除旧 `watchlist` 文档时，如果它带 `imageAssetId`，同时用 `Artifact` 工具的
-`delete_asset`（`url` = 仪表盘 artifact 链接，`asset_id` = 那个 `imageAssetId`）把对应的图
-也删掉，避免评级下滑/换卡之后旧图片一直占着 Artifact 的资源配额。
+删除旧 `watchlist` 文档时：如果它带 `imageAssetId`，用 `Artifact` 工具的 `delete_asset`
+（`url` = 仪表盘 artifact 链接，`asset_id` = 那个 `imageAssetId`）把对应的图也删掉；如果这张
+卡走的是兜底方案（没有 `imageAssetId`），改为用 `write_db`（`db_op: "delete"`）删掉
+`card_images` 集合里 doc_id 为该卡 `primaryMtgoId` 的文档。两种情况都是为了避免评级下滑/
+换卡之后旧图片一直占着数据库/资源配额。
 
 **b) `price_history` 集合**（doc_id 用 mtgo_id 字符串，**每个版本一份**，不是每张卡一份）：
 ```
