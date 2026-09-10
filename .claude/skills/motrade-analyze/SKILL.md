@@ -11,26 +11,31 @@ description: "生成 MOTrade 每日 MTGO 单卡分析报告并更新仪表盘。
 参考 ZhuLinsen/daily_stock_analysis 的分工方式：**指标计算是确定性代码，"这个信号值不值得关注"
 是 Claude 结合策略描述做的综合判断**，两者不要混在一起写死。
 
-## 每周赛事使用率（另一个独立的定时任务，不是这个技能负责触发）
+## 每日赛事使用率（另一个独立的定时任务，不是这个技能负责触发）
 
-`metagame_pipeline.py` 从 MTGO 官方赛事牌表（mtgo.com/decklists，Challenge + 每日 League 5-0，
-Modern/Legacy/Standard/Pauper）统计每周各卡使用率。**这个脚本由另一个周度 routine（每周二跑
-一次）负责触发，不属于本技能的每日流程**，但本技能第 1 步会用到它产出的数据算出每张卡的
-`formats`/`formatUsage`。
+`metagame_pipeline.py` 统计各卡在 Modern/Legacy/Standard/Pauper 的使用率，数据源两个：
+MTGO 官方赛事牌表（mtgo.com/decklists，Challenge + 每日 League 5-0，四个赛制都做）+
+MTGTop8 线下 2 星以上赛事牌表（只做 Modern/Legacy，每个赛制取星级最高的 3 场）。
+**这个脚本由另一个 routine（每天 11:00 UTC 跑，比本技能的每日 routine 早 1 小时）负责触发，
+不属于本技能的每日流程**，但本技能第 1 步会用到它产出的数据算出每张卡的 `formats`/`formatUsage`。
+统计的是"过去 7 天滚动窗口"，不是自然周，所以每天都能拿到新的一份快照。
 
 云端 routine 每次都是全新 checkout，本地 SQLite 不会跨次保留，所以持久化走 Artifact 仪表盘
 自己的数据库（`metagame_usage` 集合，不是 git 仓库——测试过云端 routine 没有 push 权限）：
-- **周度 routine** 跑完 `metagame_pipeline.py` 后，读 `data/metagame_export.json`（脚本自动
-  生成），对每个赛制用 `write_db`（`db_op: "set"`）写一个文档到 `metagame_usage` 集合，
-  doc_id 格式 `{format}-{week_of}`（如 `modern-2026-09-07`），内容就是导出文件里那个格式的
-  `{format, week_of, sample_size, usage}` 对象（补上 `format` 字段）。
+- **每日 metagame routine** 跑完 `metagame_pipeline.py` 后，读 `data/metagame_export.json`
+  （脚本自动生成，结构 `{format: [{week_of, source, sample_size, usage}, ...]}`，同一个 format
+  可能有 `mtgo_official` 和 `mtgtop8_offline` 两条 source），对**每个 format 的每个 source**
+  用 `write_db`（`db_op: "set"`）各写一个文档到 `metagame_usage` 集合，doc_id 格式
+  `{format}-{source}-{week_of}`（如 `modern-mtgo_official-2026-09-10`，注意不同 source 是
+  不同文档，不能用同一个 doc_id 互相覆盖），内容为 `{format, week_of, source, sample_size, usage}`。
 - **每日本技能**执行第 1 步之前，先用 `read_db`（`db_op: "query"`）查 `metagame_usage` 集合，
-  按 `format` 分别查最近 8 条（`where: [["format","==","modern"]], order_by: {field:"week_of",
-  direction:"desc"}, limit: 8`），把查到的文档拼成
-  `{format: [{week_of, sample_size, usage}, ...]}` 这个结构，写到本地
+  按 `format` 分别查最近 60 条（`where: [["format","==","modern"]], order_by: {field:"week_of",
+  direction:"desc"}, limit: 60`——因为现在一天最多两条（两个 source），60 条约等于一个月），
+  把查到的文档拼成 `{format: [{week_of, source, sample_size, usage}, ...]}` 这个结构，写到本地
   `data/metagame_import.json`，再跑 `pipeline.py`——它会自动把这个文件灌回本地 SQLite
-  （`import_metagame_usage_if_present`）。如果 `metagame_usage` 集合还是空的（周度任务还没跑过
-  一次），跳过这一步直接开始正常跑，`formats` 会是空数组，这是正常现象。
+  （`import_metagame_usage_if_present`），同一天两个 source 的样本会自动合并算总占比。如果
+  `metagame_usage` 集合还是空的（metagame routine 还没跑过一次），跳过这一步直接开始正常跑，
+  `formats` 会是空数组，这是正常现象。
 
 ## 运行步骤
 
