@@ -120,6 +120,7 @@ Cube/Commander 向的，情报面判断时要说明"未见近期 Modern/Legacy/S
   direction: "rise",   // 上涨候选必须带这个字段；下跌候选不用带（省略即默认下跌）
   verdict: "stabilizing" | "falling_knife" | "established" | "momentum" | "caution" | "new_set",
   note: "一两句话的研判，中文，供仪表盘详情页展示",
+  imageUrl, imageAssetId,   // 卡图，见下面"卡图"小节；抓不到图就都不要写这两个字段
   versions: [   // 该卡的全部已知版本，仪表盘详情页用这个渲染版本切换器
     { mtgoId, set, foil, goatbotsPrice, cardhoarderPrice, chg7d, chg30d, low90, ma7, ma30 },
     ...
@@ -129,6 +130,23 @@ Cube/Commander 向的，情报面判断时要说明"未见近期 Modern/Legacy/S
 verdict 的取值必须是上面枚举里的英文 key（仪表盘 CSS/文案按这几个 key 渲染），不要自己发明新词。
 `versions` 数组直接从 `data/latest_watchlist.json` 里对应卡片的 `versions` 字段取，字段名要转成
 驼峰（`mtgo_id`→`mtgoId`、`goatbotsPrice`/`cardhoarderPrice`/`chg_7d_pct`→`chg7d` 等）。
+
+**卡图（每张入选卡都要配）**：写入前先 `read_db`（`db_op: "get"`）看这张卡在 `watchlist`
+集合里已有的文档：
+- 如果已有文档的 `primaryMtgoId` 跟这次一样、且带着 `imageAssetId`，直接复用它的
+  `imageUrl`/`imageAssetId`，不用重新下载上传（省 Scryfall 请求和 Artifact 资源配额）。
+- 否则（新卡，或者 `primaryMtgoId` 变了——比如更便宜的新版本上线）：
+  1. `python fetch_card_image.py <primaryMtgoId> data/images/<primaryMtgoId>.jpg`
+     下载卡图到本地。如果脚本退出码是 1（打印 `NO_IMAGE`），说明 Scryfall 没收录这个印刷
+     版本的图，跳过卡图字段，不要中断整个流水线。
+  2. 用 `Artifact` 工具的 `upload_asset`（`url` = 仪表盘 artifact 链接，`file_path` =
+     刚下载的图片路径）上传，拿到返回的 `{id, url}`。
+  3. 把 `imageUrl = url`、`imageAssetId = id` 填进这张卡的文档里。
+
+**清理旧卡的图**：本节前面"写入前建议先 `read_db`...把这次不再入选的旧文档删掉"那一步，
+删除旧 `watchlist` 文档时，如果它带 `imageAssetId`，同时用 `Artifact` 工具的
+`delete_asset`（`url` = 仪表盘 artifact 链接，`asset_id` = 那个 `imageAssetId`）把对应的图
+也删掉，避免评级下滑/换卡之后旧图片一直占着 Artifact 的资源配额。
 
 **b) `price_history` 集合**（doc_id 用 mtgo_id 字符串，**每个版本一份**，不是每张卡一份）：
 ```

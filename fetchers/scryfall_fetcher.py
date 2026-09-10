@@ -79,3 +79,15 @@ def fetch_cardhoarder_prices_by_mtgo_id() -> dict:
         if mtgo_id is not None and tix is not None:
             result[int(mtgo_id)] = float(tix)
     return result
+
+
+def fetch_card_image_bytes(mtgo_id: int) -> bytes | None:
+    """按 mtgo_id 取卡图原始字节（Scryfall 官方按 MTGO id 查图的接口，
+    `requests` 默认会跟随 302 重定向到 cards.scryfall.io 的 CDN）。
+    找不到图（比如冷门促销版本没收录）时返回 None，调用方应该跳过而不是报错中断。
+    """
+    url = f"https://api.scryfall.com/cards/mtgo/{mtgo_id}?format=image"
+    resp = requests.get(url, headers=_HEADERS, timeout=20)
+    if resp.status_code != 200:
+        return None
+    return resp.content
