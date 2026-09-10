@@ -293,6 +293,7 @@
         你人工看到的 bot 收购价，手动记一笔，慢慢积累成你自己的买卖比例参考数据。
         两种查价方式都行：① MTGO 客户端里实际开一次交易看报价（最准）；
         ② 浏览器打开 goatbots.com 搜卡名，页面上买卖价都会显示（更方便，人眼查看不受限制，程序不抓取）。
+        卡多的话可以先把看到的几张一起记在备忘里，再用下面"批量粘贴录入"一次性提交，不用一张一张填表单。
       </p>
       <div id="obs-empty" class="empty-state" hidden>还没有记录。</div>
       <div class="table-wrap">
@@ -308,6 +309,17 @@
         <button type="submit">记录买价</button>
         <div class="form-msg full" id="obs-msg"></div>
       </form>
+      <details style="margin-top:16px;">
+        <summary style="cursor:pointer;font-size:12.5px;color:var(--text-dim);">一次看多张卡？批量粘贴录入</summary>
+        <form class="entry" id="obs-batch-form" style="margin-top:10px;">
+          <div class="full">
+            <label for="o-batch">每行一条，格式："卡名, 收购价" 或 "卡名, 收购价, Bot"（Bot 不填默认 GoatBots）</label>
+            <textarea id="o-batch" rows="5" placeholder="Ragavan, Nimble Pilferer, 12.5&#10;Scroll Rack, 3.2, Cardhoarder" style="width:100%;background:var(--paper);border:1px solid var(--line);border-radius:6px;padding:7px 9px;font-size:13.5px;color:var(--text);font-family:'IBM Plex Mono',monospace;"></textarea>
+          </div>
+          <button type="submit">批量记录</button>
+          <div class="form-msg full" id="obs-batch-msg"></div>
+        </form>
+      </details>
     </section>
   </section>
 
@@ -668,6 +680,42 @@
         msg.textContent = '已记录'; msg.className = 'form-msg ok full';
       } catch (e) { msg.textContent = '保存失败: ' + (e && e.message ? e.message : '未知错误'); msg.className = 'form-msg err full'; }
       finally { btn.disabled = false; }
+    });
+
+    document.getElementById('obs-batch-form').addEventListener('submit', async function (ev) {
+      ev.preventDefault();
+      var msg = document.getElementById('obs-batch-msg');
+      var btn = ev.target.querySelector('button');
+      var raw = document.getElementById('o-batch').value;
+      var lines = raw.split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
+      if (!lines.length) { msg.textContent = '先粘贴几行再提交'; msg.className = 'form-msg err full'; return; }
+      var validBots = ['GoatBots', 'Cardhoarder', '其他'];
+      var parsed = [], errors = [];
+      lines.forEach(function (line, i) {
+        var parts = line.split(',').map(function (p) { return p.trim(); });
+        if (parts.length < 2) { errors.push('第' + (i + 1) + '行：格式不对，缺少逗号分隔的价格'); return; }
+        var name = parts[0];
+        var price = parseFloat(parts[1]);
+        var bot = parts[2] || 'GoatBots';
+        if (validBots.indexOf(bot) === -1) bot = '其他';
+        if (!name || isNaN(price)) { errors.push('第' + (i + 1) + '行：卡名或价格无法识别'); return; }
+        parsed.push({ name: name, bot: bot, price: price, date: todayStr() });
+      });
+      if (!parsed.length) { msg.textContent = errors.join('；'); msg.className = 'form-msg err full'; return; }
+      btn.disabled = true; msg.textContent = '提交中…'; msg.className = 'form-msg full';
+      var okCount = 0;
+      for (var j = 0; j < parsed.length; j++) {
+        try { await db.collection('buy_observations').add(parsed[j]); okCount++; }
+        catch (e) { errors.push(parsed[j].name + '：保存失败'); }
+      }
+      btn.disabled = false;
+      if (okCount === parsed.length) {
+        ev.target.reset();
+        msg.textContent = '已记录 ' + okCount + ' 条'; msg.className = 'form-msg ok full';
+      } else {
+        msg.textContent = '成功 ' + okCount + ' 条，' + errors.length + ' 条有问题：' + errors.join('；');
+        msg.className = 'form-msg err full';
+      }
     });
 
     document.getElementById('holdings-body').addEventListener('click', async function (ev) {
