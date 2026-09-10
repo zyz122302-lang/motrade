@@ -23,6 +23,28 @@ from fetchers import goatbots_fetcher, scryfall_fetcher
 
 LEGALITY_REFRESH_DAYS = 7
 OUTPUT_PATH = DATA_DIR / "latest_watchlist.json"
+METAGAME_FORMATS = ("standard", "modern", "legacy", "pauper")
+USAGE_RELEVANCE_THRESHOLD = 0.02  # 至少 2% 的牌表用到才算"在这个赛制里活跃"
+
+
+def format_usage_for(conn, name: str) -> dict:
+    """返回 {format: {playRate, prevPlayRate, weeksOfData}}，只包含最新一周
+    play_rate 达到 USAGE_RELEVANCE_THRESHOLD 的赛制（卡真的在被用，不是零星一两套牌）。"""
+    out = {}
+    for fmt in METAGAME_FORMATS:
+        trend = storage.metagame_usage_trend(conn, name, fmt, limit_weeks=8)
+        if not trend:
+            continue
+        latest_rate = trend[-1][1]
+        if latest_rate < USAGE_RELEVANCE_THRESHOLD:
+            continue
+        prev_rate = trend[-2][1] if len(trend) >= 2 else None
+        out[fmt] = {
+            "playRate": round(latest_rate, 4),
+            "prevPlayRate": round(prev_rate, 4) if prev_rate is not None else None,
+            "weeksOfData": len(trend),
+        }
+    return out
 
 
 def refresh_legality_if_stale(conn):
@@ -123,10 +145,13 @@ def run():
             primary = min(versions, key=best_of)
             best_price = best_of(primary)
             best_source = "goatbots" if primary["goatbotsPrice"] == best_price else "cardhoarder"
+            format_usage = format_usage_for(conn, name)
 
             card_results.append({
                 "name": name,
                 "rarity": primary["rarity"],
+                "formats": sorted(format_usage.keys()),
+                "formatUsage": format_usage,
                 "versionCount": len(versions),
                 "bestPrice": best_price,
                 "bestSource": best_source,

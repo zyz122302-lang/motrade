@@ -66,6 +66,15 @@
     font-size: 10.5px; color: var(--text-dim);
   }
 
+  .fmt-filter { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
+  .fmt-btn {
+    background: var(--paper-raise); border: 1px solid var(--line); border-radius: 20px;
+    color: var(--text-dim); font-size: 12px; padding: 5px 13px; cursor: pointer;
+    font-family: 'IBM Plex Sans', sans-serif;
+  }
+  .fmt-btn:hover { border-color: var(--gold-soft); }
+  .fmt-btn.active { background: var(--gold); border-color: var(--gold); color: #1c1305; font-weight: 600; }
+
   main { padding: 18px 20px 0; }
   .view { display: none; }
   .view.active { display: block; }
@@ -211,8 +220,16 @@
       <strong>仍在下跌</strong>指跌势主要发生在最近7天，还没有止跌迹象——这个分类不是简单按跌幅排名，
       是拿 7日跌幅占30日跌幅的比例做区分，比例低=已放缓，比例高=还在加速跌。价格取该卡所有版本
       （不同系列、foil/非foil）在 GoatBots / Cardhoarder 两个数据源里的最低价，点卡名进详情页可以
-      切换看每个版本各自的走势。
+      切换看每个版本各自的走势。赛制标签来自MTGO官方赛事牌表的每周使用率统计（Challenge + 每日5-0
+      League），至少 2% 的牌表用到才会标该赛制；"全部"只看价格信号，不要求有赛事数据支撑。
     </p>
+    <div class="fmt-filter" data-for="fall">
+      <button class="fmt-btn active" data-fmt="all">全部</button>
+      <button class="fmt-btn" data-fmt="standard">标准</button>
+      <button class="fmt-btn" data-fmt="modern">摩登</button>
+      <button class="fmt-btn" data-fmt="legacy">薪传</button>
+      <button class="fmt-btn" data-fmt="pauper">纯铁</button>
+    </div>
     <div class="table-wrap">
       <table>
         <thead><tr><th>卡牌</th><th>研判</th><th class="num">最低价</th><th class="num">30日</th></tr></thead>
@@ -228,6 +245,13 @@
       的百分比失真，也可能是新赛制合法性变化等真实原因，具体判断写在每张卡的详情里，别看到百分比大就当成
       强烈买入信号。价格同样取所有版本、两个数据源里的最低价。
     </p>
+    <div class="fmt-filter" data-for="rise">
+      <button class="fmt-btn active" data-fmt="all">全部</button>
+      <button class="fmt-btn" data-fmt="standard">标准</button>
+      <button class="fmt-btn" data-fmt="modern">摩登</button>
+      <button class="fmt-btn" data-fmt="legacy">薪传</button>
+      <button class="fmt-btn" data-fmt="pauper">纯铁</button>
+    </div>
     <div class="table-wrap">
       <table>
         <thead><tr><th>卡牌</th><th>研判</th><th class="num">最低价</th><th class="num">30日</th></tr></thead>
@@ -345,22 +369,34 @@
   }
   var SOURCE_LABEL = { goatbots: 'GoatBots', cardhoarder: 'Cardhoarder' };
 
-  function renderList(bodyId, items) {
+  var FORMAT_LABEL = { standard: '标准', modern: '摩登', legacy: '薪传', pauper: '纯铁' };
+  var fmtState = { fall: 'all', rise: 'all' };
+  var MAX_PER_FORMAT = 10;
+
+  function renderList(bodyId, items, viewKey) {
     var body = document.getElementById(bodyId);
-    if (!items.length) {
-      body.innerHTML = '<tr><td colspan="4" style="color:var(--text-dim);padding:14px 8px;">暂无数据，等待每日任务写入。</td></tr>';
+    var activeFmt = fmtState[viewKey];
+    var filtered = activeFmt === 'all' ? items : items.filter(function (c) {
+      return (c.formats || []).indexOf(activeFmt) !== -1;
+    });
+    if (!filtered.length) {
+      body.innerHTML = '<tr><td colspan="4" style="color:var(--text-dim);padding:14px 8px;">' +
+        (items.length ? '这个赛制暂无符合条件的候选。' : '暂无数据，等待每日任务写入。') + '</td></tr>';
       return;
     }
-    var sorted = items.slice().sort(function (a, b) {
+    var sorted = filtered.slice().sort(function (a, b) {
       return Math.abs(b.chg30d || 0) - Math.abs(a.chg30d || 0);
-    });
+    }).slice(0, MAX_PER_FORMAT);
     var asof = sorted[0] && sorted[0].asOf;
     if (asof) document.getElementById('stat-asof').textContent = asof;
     body.innerHTML = sorted.map(function (c) {
       var rarityClass = 'rarity-' + (c.rarity || 'Common');
       var versionNote = (c.versionCount > 1 ? c.versionCount + ' 个版本 &middot; ' : '') + (SOURCE_LABEL[c.bestSource] || '');
+      var fmtChips = (c.formats || []).map(function (f) {
+        return '<span class="set-chip">' + (FORMAT_LABEL[f] || f) + '</span>';
+      }).join('');
       return '<tr class="card-row ' + rarityClass + '" data-id="' + c.id + '">' +
-        '<td class="card-name"><span class="rarity-dot"></span>' + escapeHtml(c.name) +
+        '<td class="card-name"><span class="rarity-dot"></span>' + escapeHtml(c.name) + fmtChips +
         '<div style="font-size:10.5px;color:var(--text-dim);margin-top:2px;">' + versionNote + '</div></td>' +
         '<td>' + verdictChip(c.verdict) + '</td>' +
         '<td class="num price">' + fmtTix(c.bestPrice) + '</td>' +
@@ -546,10 +582,20 @@
     document.getElementById('rise-body').addEventListener('click', function (ev) {
       var tr = ev.target.closest('tr.card-row'); if (tr) openDetail(tr.getAttribute('data-id'), 'rise');
     });
+    document.querySelectorAll('.fmt-filter').forEach(function (bar) {
+      var viewKey = bar.getAttribute('data-for');
+      bar.querySelectorAll('.fmt-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          fmtState[viewKey] = btn.getAttribute('data-fmt');
+          bar.querySelectorAll('.fmt-btn').forEach(function (b) { b.classList.toggle('active', b === btn); });
+          renderList(viewKey + '-body', viewKey === 'fall' ? fallItems : riseItems, viewKey);
+        });
+      });
+    });
 
-    if (!window.claude || !window.claude.use) { renderList('fall-body', []); renderList('rise-body', []); return; }
+    if (!window.claude || !window.claude.use) { renderList('fall-body', [], 'fall'); renderList('rise-body', [], 'rise'); return; }
     db = await window.claude.use('db');
-    if (!db) { renderList('fall-body', []); renderList('rise-body', []); return; }
+    if (!db) { renderList('fall-body', [], 'fall'); renderList('rise-body', [], 'rise'); return; }
 
     db.collection('watchlist').onSnapshot(function (snap) {
       var all = snap.docs.map(function (d) {
@@ -564,10 +610,10 @@
       document.getElementById('stat-rise').textContent = String(riseItems.length);
       document.getElementById('tab-fall-count').textContent = fallItems.length || '';
       document.getElementById('tab-rise-count').textContent = riseItems.length || '';
-      renderList('fall-body', fallItems);
-      renderList('rise-body', riseItems);
+      renderList('fall-body', fallItems, 'fall');
+      renderList('rise-body', riseItems, 'rise');
       renderHoldings();
-    }, function () { renderList('fall-body', []); renderList('rise-body', []); });
+    }, function () { renderList('fall-body', [], 'fall'); renderList('rise-body', [], 'rise'); });
 
     db.collection('portfolio').onSnapshot(function (snap) {
       holdingItems = snap.docs.map(function (d) {
