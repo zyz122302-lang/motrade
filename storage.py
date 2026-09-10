@@ -164,15 +164,18 @@ def metagame_usage_for_week(conn, week_of: str) -> dict:
     return out
 
 
-def import_metagame_usage_snapshot(conn, snapshot: dict, source: str = "mtgo_official"):
+def import_metagame_usage_snapshot(conn, snapshot: dict, default_source: str = "mtgo_official"):
     """把从 Artifact `metagame_usage` 集合读回来的历史数据灌回本地 SQLite，
-    snapshot 结构：{format: [{"week_of": ..., "sample_size": ..., "usage": {name: count}}, ...]}。
-    每天流水线在算 formatUsage 之前先跑这一步，这样云端每次全新环境也能看到过去几周的数据。"""
+    snapshot 结构：{format: [{"week_of": ..., "source": ..., "sample_size": ..., "usage": {name: count}}, ...]}。
+    每份快照可以带自己的 source（比如 mtgo_official / mtgtop8_offline），
+    没带的话用 default_source。每天流水线在算 formatUsage 之前先跑这一步，
+    这样云端每次全新环境也能看到过去几天/几周的数据。"""
     total = 0
     for fmt, weeks in snapshot.items():
         for week in weeks:
             usage = dict(week.get("usage") or {})
             usage["__sample_size__"] = week.get("sample_size", 0)
+            source = week.get("source", default_source)
             total += upsert_metagame_usage(conn, week["week_of"], fmt, source, usage)
     return total
 
