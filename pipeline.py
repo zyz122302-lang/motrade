@@ -47,7 +47,7 @@ def format_usage_for(conn, name: str) -> dict:
     play_rate 达到 USAGE_RELEVANCE_THRESHOLD 的赛制（卡真的在被用，不是零星一两套牌）。"""
     out = {}
     for fmt in METAGAME_FORMATS:
-        trend = storage.metagame_usage_trend(conn, name, fmt, limit_weeks=8)
+        trend = storage.metagame_usage_trend(conn, name, fmt, limit_weeks=30)
         if not trend:
             continue
         latest_rate = trend[-1][1]

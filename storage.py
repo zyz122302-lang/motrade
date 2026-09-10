@@ -177,7 +177,7 @@ def import_metagame_usage_snapshot(conn, snapshot: dict, source: str = "mtgo_off
     return total
 
 
-def metagame_usage_trend(conn, name: str, format_: str, limit_weeks: int = 8):
+def metagame_usage_trend(conn, name: str, format_: str, limit_weeks: int = 30):
     """返回该卡在某赛制里最近几周的使用率序列：[(week_of, play_rate), ...]，
     合并同一周内多个 source（比如 MTGO 官方 + MTGTop8）的样本后再算占比。"""
     rows = conn.execute(
