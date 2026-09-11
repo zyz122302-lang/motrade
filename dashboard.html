@@ -91,15 +91,7 @@
 
   .panel-note { color: var(--text-dim); font-size: 12.5px; margin: 0 0 14px; line-height: 1.55; }
 
-  .news-strip {
-    border: 1px solid var(--line); border-left: 3px solid var(--gold); border-radius: 8px;
-    padding: 10px 14px; margin-bottom: 16px; background: var(--paper-raise);
-  }
-  .news-strip-head { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-dim); margin-bottom: 6px; }
-  .news-item { font-size: 12.5px; line-height: 1.6; }
-  .news-item .news-date { font-family: 'IBM Plex Mono', monospace; color: var(--text-dim); margin-right: 6px; }
-  .news-item .news-bad { color: var(--loss); font-weight: 600; }
-  .news-item .news-good { color: var(--profit); font-weight: 600; }
+  .news-date { font-family: 'IBM Plex Mono', monospace; color: var(--text-dim); margin-right: 6px; }
 
   .imp-row { display: flex; align-items: center; gap: 10px; margin-bottom: 7px; font-size: 12.5px; }
   .imp-label { width: 150px; flex-shrink: 0; color: var(--text-dim); }
@@ -207,6 +199,20 @@
   svg.price-chart { width: 100%; height: auto; display: block; }
   .chart-empty { color: var(--text-dim); font-size: 12.5px; padding: 30px 0; text-align: center; }
 
+  .home-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+  @media (max-width: 760px) { .home-grid { grid-template-columns: 1fr; } }
+  .home-sub-head { font-size: 12.5px; font-weight: 600; margin: 18px 0 8px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-dim); }
+  .home-sub-head:first-of-type { margin-top: 2px; }
+  .home-news-item { font-size: 12.5px; line-height: 1.6; padding: 6px 0; border-bottom: 1px solid var(--line); }
+  .home-news-item:last-child { border-bottom: none; }
+  .br-format-block { margin-bottom: 10px; }
+  .br-format-block:last-child { margin-bottom: 0; }
+  .br-format-name { font-size: 11.5px; font-weight: 600; color: var(--text-dim); margin-bottom: 3px; }
+  .br-cards { font-size: 12.5px; line-height: 1.6; }
+  .tc-mini-forms { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-top: 16px; }
+  @media (max-width: 460px) { .tc-mini-forms { grid-template-columns: 1fr; } }
+  .tc-mini-forms .mini-head { font-size: 11px; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: .05em; }
+
   footer.principles { margin-top: 24px; padding: 16px 20px 0; border-top: 1px solid var(--line); font-size: 11px; color: var(--text-dim); line-height: 1.7; }
 </style>
 
@@ -218,7 +224,8 @@
 </header>
 
 <nav class="tabs">
-  <button data-view="fall" class="active">下跌观察 <span class="badge mono" id="tab-fall-count"></span></button>
+  <button data-view="home" class="active">首页</button>
+  <button data-view="fall">下跌观察 <span class="badge mono" id="tab-fall-count"></span></button>
   <button data-view="rise">上涨观察 <span class="badge mono" id="tab-rise-count"></span></button>
   <button data-view="portfolio">持仓 <span class="badge mono" id="tab-portfolio-count"></span></button>
   <button data-view="obs">买价记录 <span class="badge mono" id="tab-obs-count"></span></button>
@@ -234,13 +241,69 @@
     <div class="tile"><div class="label">数据日期</div><div class="value mono" id="stat-asof">—</div></div>
   </div>
 
-  <div id="news-strip" class="news-strip" hidden>
-    <div class="news-strip-head">情报速递 &middot; 官方禁限赛制变动</div>
-    <div id="news-strip-body"></div>
-  </div>
+  <!-- HOME VIEW -->
+  <section class="view active" id="view-home">
+    <div class="home-grid">
+      <section class="panel home-info-panel">
+        <div class="panel-head"><h2>市场情报总览</h2></div>
+        <p class="panel-note">
+          禁限赛制公告和供给端事件（新系列上线/重印释放供给）是"情报面"里最硬的利空/利好信号，
+          经常是价格异动的真正原因，比价格本身的技术面指标更早、更确定。
+        </p>
+
+        <div class="home-sub-head">最新资讯</div>
+        <div id="home-news-list"></div>
+        <div id="home-news-empty" class="empty-state" hidden>暂无资讯记录，等待每日任务写入。</div>
+
+        <div class="home-sub-head">供应端动态</div>
+        <div id="home-supply-list"></div>
+        <div id="home-supply-empty" class="empty-state" hidden>暂无最新的供给端事件记录（新系列上线/重印释放供给等）。</div>
+
+        <div class="home-sub-head">禁限牌情况概览</div>
+        <div id="home-br-overview"></div>
+        <div id="home-br-empty" class="empty-state" hidden>暂无禁限名单快照，等待每日任务写入。</div>
+      </section>
+
+      <section class="panel home-tc-panel">
+        <div class="panel-head"><h2>Treasure Chest</h2><span id="tc-asof" class="mono" style="font-size:11px;color:var(--text-dim);"></span></div>
+        <p class="panel-note">
+          MTGO 独有的可交易物品（不是印刷单卡），Vintage/Legacy Challenge 等赛事的常见奖励，
+          玩家之间可以像单卡一样在 GoatBots 交易它本身。不计入上面下跌/上涨观察列表，单独在这里追踪走势。
+        </p>
+        <div id="tc-empty" class="empty-state" hidden>还没有 Treasure Chest 的价格数据，等待每日任务写入。</div>
+        <div id="tc-body" hidden>
+          <div class="detail-price mono" id="tc-price">—</div>
+          <div class="stat-grid">
+            <div class="tile"><div class="label">7日涨跌</div><div class="value mono" id="tc-chg7"></div></div>
+            <div class="tile"><div class="label">30日涨跌</div><div class="value mono" id="tc-chg30"></div></div>
+            <div class="tile"><div class="label">90日低点</div><div class="value mono" id="tc-low90"></div></div>
+            <div class="tile"><div class="label">90日高点</div><div class="value mono" id="tc-high90"></div></div>
+          </div>
+          <div class="chart-wrap"><div id="tc-chart-container">加载价格曲线…</div></div>
+
+          <div class="tc-mini-forms">
+            <form class="entry" id="tc-hold-form" style="margin-top:0;">
+              <div class="full mini-head">加入持仓</div>
+              <div><label for="tc-h-qty">数量</label><input id="tc-h-qty" type="number" min="1" step="1" value="1" required /></div>
+              <div><label for="tc-h-cost">成本价 (TIX/个)</label><input id="tc-h-cost" type="number" min="0" step="0.01" required /></div>
+              <button type="submit">加入持仓</button>
+              <div class="form-msg full" id="tc-hold-msg"></div>
+            </form>
+            <form class="entry" id="tc-obs-form" style="margin-top:0;">
+              <div class="full mini-head">记录收购价</div>
+              <div><label for="tc-o-bot">Bot</label><select id="tc-o-bot"><option>GoatBots</option><option>Cardhoarder</option><option>其他</option></select></div>
+              <div><label for="tc-o-price">收购价 (TIX)</label><input id="tc-o-price" type="number" min="0" step="0.01" required /></div>
+              <button type="submit">记录买价</button>
+              <div class="form-msg full" id="tc-obs-msg"></div>
+            </form>
+          </div>
+        </div>
+      </section>
+    </div>
+  </section>
 
   <!-- FALL VIEW -->
-  <section class="view active" id="view-fall">
+  <section class="view" id="view-fall">
     <p class="panel-note">
       卖价（ask）7日/30日/90日趋势里，接近90日低点或近7日大跌的候选。<strong>企稳</strong>指下跌动能已放缓，
       <strong>仍在下跌</strong>指跌势主要发生在最近7天，还没有止跌迹象——这个分类不是简单按跌幅排名，
@@ -548,21 +611,76 @@
       : '—';
   }
 
-  function renderNewsStrip(events) {
-    var strip = document.getElementById('news-strip');
-    var body = document.getElementById('news-strip-body');
-    if (!events.length) { strip.hidden = true; return; }
-    var sorted = events.slice().sort(function (a, b) { return (b.date || '').localeCompare(a.date || ''); }).slice(0, 5);
-    body.innerHTML = sorted.map(function (e) {
-      var text = e.summary || (
-        (e.added && e.added.length ? '新增：' + e.added.join('、') : '') +
-        (e.removed && e.removed.length ? (e.added && e.added.length ? '；' : '') + '解除：' + e.removed.join('、') : '')
-      );
-      return '<div class="news-item"><span class="news-date">' + escapeHtml(e.date || '') + '</span>' +
-        '<span class="mono" style="color:var(--text-dim);margin-right:6px;">[' + escapeHtml(e.format || '') + ']</span>' +
-        escapeHtml(text) + '</div>';
+  var NEWS_TYPE_LABEL = { banned_restricted: '禁限公告', supply_open: '供给动态' };
+  function renderNewsRow(e) {
+    var text = e.summary || (
+      (e.added && e.added.length ? '新增：' + e.added.join('、') : '') +
+      (e.removed && e.removed.length ? (e.added && e.added.length ? '；' : '') + '解除：' + e.removed.join('、') : '')
+    );
+    var typeLabel = NEWS_TYPE_LABEL[e.type] || '资讯';
+    var tagText = (e.format ? e.format + ' · ' : '') + typeLabel;
+    return '<div class="home-news-item"><span class="news-date">' + escapeHtml(e.date || '') + '</span>' +
+      '<span class="mono" style="color:var(--text-dim);margin-right:6px;">[' + escapeHtml(tagText) + ']</span>' +
+      escapeHtml(text) + '</div>';
+  }
+
+  function renderHomeNews(events) {
+    var list = document.getElementById('home-news-list');
+    var empty = document.getElementById('home-news-empty');
+    var supplyList = document.getElementById('home-supply-list');
+    var supplyEmpty = document.getElementById('home-supply-empty');
+    var sorted = events.slice().sort(function (a, b) { return (b.date || '').localeCompare(a.date || ''); });
+    var general = sorted.slice(0, 8);
+    if (!general.length) { list.innerHTML = ''; empty.hidden = false; }
+    else { empty.hidden = true; list.innerHTML = general.map(renderNewsRow).join(''); }
+    var supply = sorted.filter(function (e) { return e.type === 'supply_open'; }).slice(0, 6);
+    if (!supply.length) { supplyList.innerHTML = ''; supplyEmpty.hidden = false; }
+    else { supplyEmpty.hidden = true; supplyList.innerHTML = supply.map(renderNewsRow).join(''); }
+  }
+
+  function renderBrOverview(doc) {
+    var wrap = document.getElementById('home-br-overview');
+    var empty = document.getElementById('home-br-empty');
+    var formats = doc ? Object.keys(doc).filter(function (k) { return Array.isArray(doc[k]) && doc[k].length; }) : [];
+    if (!formats.length) { wrap.innerHTML = ''; empty.hidden = false; return; }
+    empty.hidden = true;
+    wrap.innerHTML = formats.map(function (fmt) {
+      var names = doc[fmt].map(function (n) { return escapeHtml(n); }).join('、');
+      return '<div class="br-format-block"><div class="br-format-name">' + escapeHtml(fmt) + '</div>' +
+        '<div class="br-cards">' + names + '</div></div>';
     }).join('');
-    strip.hidden = false;
+  }
+
+  var TC_NAME = 'Treasure Chest';
+  var tcMtgoId = null;
+  function renderTreasureChest(doc) {
+    var empty = document.getElementById('tc-empty');
+    var body = document.getElementById('tc-body');
+    if (!doc) { empty.hidden = false; body.hidden = true; return; }
+    empty.hidden = true; body.hidden = false;
+    tcMtgoId = doc.mtgoId;
+    document.getElementById('tc-asof').textContent = doc.asOf || '';
+    document.getElementById('tc-price').textContent = fmtTix(doc.price);
+    document.getElementById('tc-chg7').innerHTML = chgHtml(doc.chg_7d_pct);
+    document.getElementById('tc-chg30').innerHTML = chgHtml(doc.chg_30d_pct);
+    document.getElementById('tc-low90').textContent = fmtTix(doc.low_90d);
+    document.getElementById('tc-high90').textContent = fmtTix(doc.high_90d);
+    loadTreasureChestChart();
+  }
+  function loadTreasureChestChart() {
+    var container = document.getElementById('tc-chart-container');
+    if (!container || !tcMtgoId) return;
+    container.innerHTML = '加载价格曲线…';
+    if (!db) { container.innerHTML = '<div class="chart-empty">数据库不可用</div>'; return; }
+    db.collection('price_history').doc(String(tcMtgoId)).get().then(function (snap) {
+      var c2 = document.getElementById('tc-chart-container');
+      if (!c2) return;
+      if (!snap.exists) { c2.innerHTML = '<div class="chart-empty">还没有历史曲线数据</div>'; return; }
+      c2.innerHTML = buildChart((snap.data() || {}).series || []);
+    }).catch(function () {
+      var c2 = document.getElementById('tc-chart-container');
+      if (c2) c2.innerHTML = '<div class="chart-empty">加载曲线失败</div>';
+    });
   }
 
   var FEATURE_LABEL = {
@@ -657,6 +775,12 @@
     var all = fallItems.concat(riseItems);
     var rows = [];
     holdingItems.forEach(function (h) {
+      // Treasure Chest 不是印刷单卡，没有系列/foil 版本概念，单独处理一条即可，
+      // 不走下面按 set/名字匹配观察池版本列表的逻辑。
+      if (h.name === TC_NAME) {
+        rows.push({ name: h.name, mtgoId: tcMtgoId, set: '', foil: null, collectorNumber: '', rawLabel: '—', first: true, groupSize: 1 });
+        return;
+      }
       // 持仓如果记了具体版本（h.set，格式跟别处一致，比如 "PRM #339 F"），只展示这一条——
       // 你实际持有的就是这一个版本，不用把这张卡的所有已知版本都列出来查一遍。
       if (h.set) {
@@ -1112,8 +1236,16 @@
 
     db.collection('news_events').onSnapshot(function (snap) {
       var events = snap.docs.map(function (d) { return d.data(); });
-      renderNewsStrip(events);
-    }, function () { renderNewsStrip([]); });
+      renderHomeNews(events);
+    }, function () { renderHomeNews([]); });
+
+    db.collection('site_meta').doc('banned_restricted_snapshot').onSnapshot(function (snap) {
+      renderBrOverview(snap.exists ? snap.data() : null);
+    }, function () { renderBrOverview(null); });
+
+    db.collection('special_items').doc('treasure_chest').onSnapshot(function (snap) {
+      renderTreasureChest(snap.exists ? snap.data() : null);
+    }, function () { renderTreasureChest(null); });
 
     db.collection('research_runs').doc('latest').onSnapshot(function (snap) {
       renderResearch(snap.exists ? snap.data() : null);
@@ -1190,6 +1322,38 @@
       btn.disabled = true; msg.textContent = ''; msg.className = 'form-msg full';
       try {
         await db.collection('buy_observations').add({ name: name, set: set, bot: bot, price: price, date: todayStr() });
+        ev.target.reset();
+        msg.textContent = '已记录'; msg.className = 'form-msg ok full';
+      } catch (e) { msg.textContent = '保存失败: ' + (e && e.message ? e.message : '未知错误'); msg.className = 'form-msg err full'; }
+      finally { btn.disabled = false; }
+    });
+
+    document.getElementById('tc-hold-form').addEventListener('submit', async function (ev) {
+      ev.preventDefault();
+      var msg = document.getElementById('tc-hold-msg');
+      var btn = ev.target.querySelector('button');
+      var qty = parseFloat(document.getElementById('tc-h-qty').value);
+      var cost = parseFloat(document.getElementById('tc-h-cost').value);
+      if (!qty || isNaN(cost)) { msg.textContent = '请填写完整'; msg.className = 'form-msg err full'; return; }
+      btn.disabled = true; msg.textContent = ''; msg.className = 'form-msg full';
+      try {
+        await db.collection('portfolio').add({ name: TC_NAME, qty: qty, cost: cost, set: '', addedAt: todayStr() });
+        ev.target.reset(); document.getElementById('tc-h-qty').value = 1;
+        msg.textContent = '已加入持仓'; msg.className = 'form-msg ok full';
+      } catch (e) { msg.textContent = '保存失败: ' + (e && e.message ? e.message : '未知错误'); msg.className = 'form-msg err full'; }
+      finally { btn.disabled = false; }
+    });
+
+    document.getElementById('tc-obs-form').addEventListener('submit', async function (ev) {
+      ev.preventDefault();
+      var msg = document.getElementById('tc-obs-msg');
+      var btn = ev.target.querySelector('button');
+      var bot = document.getElementById('tc-o-bot').value;
+      var price = parseFloat(document.getElementById('tc-o-price').value);
+      if (isNaN(price)) { msg.textContent = '请填写收购价'; msg.className = 'form-msg err full'; return; }
+      btn.disabled = true; msg.textContent = ''; msg.className = 'form-msg full';
+      try {
+        await db.collection('buy_observations').add({ name: TC_NAME, set: '', bot: bot, price: price, date: todayStr() });
         ev.target.reset();
         msg.textContent = '已记录'; msg.className = 'form-msg ok full';
       } catch (e) { msg.textContent = '保存失败: ' + (e && e.message ? e.message : '未知错误'); msg.className = 'form-msg err full'; }

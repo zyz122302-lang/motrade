@@ -122,7 +122,9 @@ universeSize, totalAnchorRows, featureCoverage, windows: {"7": {...}, "14": {...
      这条会在仪表盘顶部的"情报速递"条里显示，即使没命中当前候选池，用户也能看到。
 5. 把 `data/banned_restricted_current.json` 的内容 `write_db`（`db_op: "set"`）覆盖写回
    `site_meta/banned_restricted_snapshot`，作为明天对比的新基线（不管今天有没有变化都要写，
-   保持基线是"昨天"而不是越来越旧）。
+   保持基线是"昨天"而不是越来越旧）。这份文档同时也是仪表盘首页"禁限牌情况概览"板块直接读取
+   展示的数据源（前端按 `{format: [card_name, ...]}` 原样渲染），所以哪怕今天没有变化、不需要
+   写 `news_events` 事件，这一步也不能省略。
 
 **MTGO 新系列上线 / 维护窗口（供给面信号，定性判断，不是确定性代码）**：新系列上线会集中
 释放某些老卡的供给（拆包/重印），是常见的"价格下跌但不是需求下滑"的原因（比如之前 Godless
@@ -130,6 +132,43 @@ Shrine、Past in Flames 的案例）。写研判前如果看到某张卡在最�
 系列印刷版本上的价格异动，可以顺手 `WebSearch` 一下"MTGO weekly announcement <本周日期>"
 或者"<系列名> MTGO release date"确认是不是最近有新系列/重印上线，跟前面"异常涨跌必须
 WebSearch 核实原因"的规则是同一件事，不用另外单独跑一遍。
+
+确认某张候选卡确实是"新系列/重印释放供给"驱动的价格下跌（不是需求下滑）之后，除了照常把这个
+判断写进那张卡的 `note`，**再额外**用 `write_db`（`db_op: "set"`）写一条 `news_events` 集合的
+文档，doc_id 用 `{date}-supply-{卡名或系列的slug}`（如 `2026-09-11-supply-godless-shrine`），
+内容：
+```
+{ date, type: "supply_open", cards: ["Godless Shrine", ...], summary: "一句话中文说明，
+  比如：新系列 XX 上线，Godless Shrine 等老卡供给集中释放，价格下跌但非需求下滑" }
+```
+这条会出现在仪表盘首页"供应端动态"板块，让用户不用逐张点进候选卡详情也能看到供给面的整体情况。
+这一步是可选的、事件驱动的（只有真的观察到供给释放迹象时才写，不用每天硬凑），不像禁限公告监控
+那样是每天固定要跑的步骤。
+
+## Treasure Chest 价格追踪（仪表盘首页专属板块，本技能自己负责，每天都跑）
+
+Treasure Chest 是 MTGO 独有的可交易物品（不是印刷的 Magic 卡牌，GoatBots 把它记成
+`cardset="O99"`、`rarity="Booster"` 的特殊条目），`watchlist_builder.py` 的
+`NORMAL_RARITIES` 过滤规则天然把它排除在候选池外，所以它**永远不会出现在下跌/上涨观察
+列表里**——只在仪表盘首页有专属的价格 + 走势图板块，逻辑上和普通单卡研判完全分开，不需要
+套用 `strategies/*.yaml` 里的研判框架。
+
+步骤：
+1. 先做一次桥接（跟"每日赛事使用率"那一节的思路一样，避免每天重新下载两年历史）：
+   `read_db`（`db_op: "get"`，collection `price_history`，doc_id 是 Treasure Chest 的
+   mtgo_id 字符串——固定是 `"62245"`，脚本第一次跑时会打印出来，如果 GoatBots 哪天改了
+   这个条目的 id，以脚本打印的为准）读回它现有的 `series` 字段，写到
+   `data/treasure_chest_import.json`（结构 `{"series": [[date_str, price], ...]}`）。
+   如果这个文档还不存在（第一次跑），跳过这一步，脚本会自动退回一次性下载最近两年归档来
+   建立历史基线（比正常的每日更新慢很多，只会发生一次）。
+2. `python fetch_treasure_chest.py`——输出 `data/treasure_chest.json`，结构：
+   `{ mtgoId, name, cardset, asOf, price, chg_7d_pct, chg_30d_pct, chg_90d_pct, low_90d,
+   high_90d, ma7, ma30, days_of_history, series }`。
+3. 用 `write_db`（`db_op: "set"`）把这份 JSON 拆成两份写：
+   - 去掉 `series` 字段后的其余内容，写到 `special_items/treasure_chest`（首页价格面板
+     直接读这个文档，字段名跟 `data/treasure_chest.json` 里的保持一致，不用转驼峰）。
+   - 只取 `series` 字段，包成 `{series: [...]}`，写到 `price_history/{mtgoId}`（跟普通
+     单卡版本共用同一个集合，仪表盘首页的走势图直接复用现成的 `buildChart` 渲染逻辑）。
 
 ## 运行步骤
 
