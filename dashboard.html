@@ -473,6 +473,14 @@
         </div>
         <div class="ledger" id="research-ledger" style="margin-bottom:16px;"></div>
         <p class="panel-note" id="research-coverage" style="margin-bottom:18px;"></p>
+        <h3 style="font-size:15px;margin-bottom:8px;">历史研判命中率（到期后回头核对，不影响当前研判）</h3>
+        <p class="panel-note" style="margin-bottom:8px;">
+          每天/每周写下的 verdict 会存档，到期（daily 固定30天，研究板块按各自窗口 7/14/30 天）
+          后自动回头核对当时的判断跟实际走势是否一致——这不是预测准确率，是"研判说的话有没有兑现"。
+          样本数 &lt;10 的类型仅供参考，不代表有统计意义。
+        </p>
+        <div id="verdict-track-empty" class="empty-state" hidden>还没有到期的研判记录，等积累一段时间后会自动出现。</div>
+        <div id="verdict-track-body" style="margin-bottom:22px;"></div>
         <h3 style="font-size:15px;margin-bottom:8px;" id="research-importance-head">特征重要性（模型认为哪些指标最能预测反弹）</h3>
         <div id="research-importance" style="margin-bottom:22px;"></div>
         <h3 style="font-size:15px;margin-bottom:8px;" id="research-table-head">预测反弹概率 &gt; 50% 的候选（按概率降序，点卡名可查看详情）</h3>
@@ -529,6 +537,24 @@
     if (!v) return '';
     var label = VERDICT_LABEL[v] || v;
     return '<span class="verdict-chip verdict-' + v + '">' + label + '</span>';
+  }
+
+  function renderVerdictTrackRecord(doc) {
+    var empty = document.getElementById('verdict-track-empty');
+    var body = document.getElementById('verdict-track-body');
+    if (!empty || !body) return;
+    var byVerdict = doc && doc.byVerdict;
+    var rows = byVerdict ? Object.keys(byVerdict).filter(function (k) { return byVerdict[k].total > 0; }) : [];
+    if (!rows.length) { body.innerHTML = ''; empty.hidden = false; return; }
+    empty.hidden = true;
+    body.innerHTML = '<div class="ledger">' + rows.map(function (key) {
+      var s = byVerdict[key];
+      var pct = s.hitRate == null ? '—' : Math.round(s.hitRate * 100) + '%';
+      var note = s.total < 10 ? '<div style="font-size:11px;color:var(--text-dim);margin-top:2px;">样本不足，仅供参考</div>' : '';
+      return '<div class="tile">' + verdictChip(key) +
+        '<div class="value mono" style="margin-top:4px;">' + pct + '</div>' +
+        '<div style="font-size:11px;color:var(--text-dim);">' + s.hits + ' / ' + s.total + ' 条命中</div>' + note + '</div>';
+    }).join('') + '</div>';
   }
 
   function switchView(view) {
@@ -1530,6 +1556,10 @@
     db.collection('research_runs').doc('latest').onSnapshot(function (snap) {
       renderResearch(snap.exists ? snap.data() : null);
     }, function () { renderResearch(null); });
+
+    db.collection('site_meta').doc('verdict_track_record').onSnapshot(function (snap) {
+      renderVerdictTrackRecord(snap.exists ? snap.data() : null);
+    }, function () { renderVerdictTrackRecord(null); });
 
     db.collection('watchlist').onSnapshot(function (snap) {
       var all = snap.docs.map(function (d) {

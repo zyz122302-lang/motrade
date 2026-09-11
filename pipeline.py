@@ -24,8 +24,24 @@ from fetchers import goatbots_fetcher, scryfall_fetcher
 LEGALITY_REFRESH_DAYS = 7
 OUTPUT_PATH = DATA_DIR / "latest_watchlist.json"
 METAGAME_IMPORT_PATH = DATA_DIR / "metagame_import.json"
+VERDICT_LOG_IMPORT_PATH = DATA_DIR / "verdict_log_import.json"
 METAGAME_FORMATS = ("standard", "modern", "legacy", "pauper")
 USAGE_RELEVANCE_THRESHOLD = 0.02  # 至少 2% 的牌表用到才算"在这个赛制里活跃"
+
+
+def load_pending_verdict_mtgo_ids() -> set:
+    """一张卡如果后续从候选池里掉出去，本脚本默认只对"当前候选池"里的 mtgo_id 记录每日
+    价格，会导致它的价格历史断掉。`score_verdicts.py` 到期回评时如果查不到到期那天的价格，
+    回评就悄悄失效了——所以这里额外读一份桥接文件（云端 routine 从仪表盘数据库 read_db
+    `verdict_log` 集合里 `scored=false` 的记录整批写好的，`score_verdicts.py` 也读同一份
+    文件，两边共用一次 read_db，见 SKILL.md），把这些"还没到期、但可能已经不在候选池"的
+    mtgo_id 也并入今天要继续追踪价格的集合。文件不存在（还没有待到期的研判记录，或者这个
+    功能还没接入 routine）时返回空集合，不报错。
+    """
+    if not VERDICT_LOG_IMPORT_PATH.exists():
+        return set()
+    data = json.loads(VERDICT_LOG_IMPORT_PATH.read_text(encoding="utf-8"))
+    return {int(r["mtgoId"]) for r in data.get("records", []) if r.get("mtgoId") is not None}
 
 
 def import_metagame_usage_if_present(conn):
@@ -112,6 +128,13 @@ def run():
         versions_map = watchlist_builder.versions_by_name(conn, candidate_names)
         all_version_ids = {v["mtgo_id"] for versions in versions_map.values() for v in versions}
         print(f"[watchlist] {len(all_version_ids)} total tracked printings across all candidate names")
+
+        pending_ids = load_pending_verdict_mtgo_ids()
+        if pending_ids:
+            newly_added = pending_ids - all_version_ids
+            all_version_ids |= pending_ids
+            print(f"[verdict_log] {len(pending_ids)} mtgo_id referenced by unscored verdicts, "
+                  f"{len(newly_added)} not already in today's candidate pool -- keeping their price history alive")
 
         bootstrap_year_history_if_needed(conn, date.today().year, all_version_ids)
 

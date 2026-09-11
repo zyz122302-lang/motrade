@@ -105,6 +105,21 @@ totalAnchorRows, featureCoverage, panels: {"rebound": {label, threshold, windows
 - 把结果写回每个候选卡对象的 `verdict`/`note` 字段（跟每日 `watchlist` 文档同一套字段名），
   再整体写入 `research_runs/latest`。
 
+**研判存档**（供"研判命中率回评"到期后核对用，见每日本技能里的同名小节）：给两个板块、每个
+窗口里最终写进 `research_runs/latest` 的每一张 `topCandidate`，用 `write_db`
+（`db_op: "batch"`）各写一条 `verdict_log` 集合的文档，doc_id 用
+`{runDate}-{卡名slug}-research-{板块}-{窗口天数}`（比如
+`2026-09-13-baleful-strix-research-rebound-14`），内容：
+```
+{
+  date: runDate, name, mtgoId, source: "research-rebound-14",   // source 按板块+窗口拼，
+                                                                  // 板块是 "rebound"/"decline"
+  verdict, direction: null, priceAtCall: price, horizonDays: 14,   // horizonDays 就是这个候选卡所在的窗口（7/14/30）
+  rarity, scored: false, scoredAt: null, priceAtHorizon: null, actualChgPct: null, hit: null
+}
+```
+这一步只是存档，不影响 `research_runs/latest` 本身的写法。
+
 这一步需要 routine 的 `allowed_tools` 里有 `WebSearch`（创建/更新这个 routine 时记得带上，
 不要只给 `Bash`/`Read`/`Write`/`Artifact`）。
 
@@ -272,6 +287,38 @@ GoatBots/Cardhoarder 的买价（bot 愿意收多少钱）故意做了防抓取�
 不需要单独抓取或额外调用脚本。写研判 note 时参考前面"换手率低的卡，波动样本代表性要打折扣"
 那条规则即可。
 
+## 研判命中率回评（到期自动核对，本技能自己负责，每天都跑）
+
+`watchlist`/`research_runs/latest` 都是"只保留最新一份"的文档，历史研判被覆盖或删除后就永久
+丢失了，没办法回答"上周说会企稳的那些卡，后来真的没有继续跌吗"。第4步的 `verdict_log` 存档
+（daily 每张入选卡 `horizonDays=30`）和每周研究 routine 自己的存档（`horizonDays` 按候选卡
+所在窗口 7/14/30），到期后由本节自动回头核对，不是新的选卡标准，只是让"研判说的话有没有兑现"
+这件事变得可追溯。
+
+步骤：
+1. `read_db`（`db_op: "query"`，collection `verdict_log`，`where: [["scored","==",false]]`，
+   `limit: 500` 应该够用——每天新增的记录有限，到期前会一直保持 `scored=false`）读回全部未
+   评分的记录，**保留每条记录的文档 id**（查询结果每条都带着自己的 doc id，回评时要用它做
+   update 的目标），包成 `{records: [{id, date, name, mtgoId, source, verdict, direction,
+   priceAtCall, horizonDays, rarity, scored}, ...]}`，写到 `data/verdict_log_import.json`。
+   这个集合刚上线时会是空的，很正常，脚本会自己处理成"没有待评估记录"，不报错。
+2. `python score_verdicts.py`——只会处理"已经到期"（`date + horizonDays <= 今天`）的记录，
+   没到期的会原样跳过，留着下次再检查。如果同一次 routine 已经跑过"买卖价差统计"那一节产出了
+   `data/spread_stats.json`，脚本会顺带给部分记录算一个"扣掉真实价差后大概还剩多少"的参考值，
+   没有就跳过这部分，不影响主流程。输出 `data/verdict_scoring_output.json`，结构见脚本
+   docstring（`updates` 数组 + `trackRecord` 汇总）。
+3. 用 `write_db`（`db_op: "batch"`）把 `updates` 数组里每一条按 `{op: "update", collection:
+   "verdict_log", doc_id: <该条的 id>, data: <该条的 fields>}` 落库（这一步是给`verdict_log`
+   里已存在的文档打补丁，不是新建文档）。
+4. `trackRecord` 只是这次桥接进来的记录算出来的**增量**参考（不是全局最终版本，因为第1步只
+   查了 `scored=false` 的记录，不包含更早已经评过分的）。所以这一步之后，再做一次
+   `read_db`（`db_op: "list"`，collection `verdict_log`）读回**全部**记录（这时已经含刚更新
+   完的），按 `verdict` 分组统计 `hit=true`/`hit=false`（`hit=null` 的跳过，不计入分母），
+   算出 `{byVerdict: {stabilizing: {hits, total, hitRate}, ...}}`，用 `write_db`
+   （`db_op: "set"`）整份覆盖写到 `site_meta/verdict_track_record`（带上 `updatedAt`）——
+   这是仪表盘"数据研究"页"历史研判命中率"板块的数据源。
+5. 这一步不需要每天都产出内容（多数天可能没有新到期的记录），但每天都要执行，避免评分堆积。
+
 ## 运行步骤
 
 ### 1. 跑数据管道（确定性代码，不需要 LLM）
@@ -435,6 +482,22 @@ DMR 版就有两种，`set` 都是 "DMR"），光看 set+foil 分不出来，仪
 
 写入前建议先 `read_db`（`db_op: "list"`, collection `watchlist`）看当前有哪些文档，
 把这次不再入选的旧文档删掉（连同它对应的 `price_history` 文档一起删），避免仪表盘堆积过期信号。
+
+**c) `verdict_log` 集合**（只追加，不覆盖，不删除——这是历史研判的存档，供"研判命中率回评"
+那一节到期后回头核对用）：对**这次入选**的每张卡（下跌+上涨候选都要），用 `write_db`
+（`db_op: "batch"`）各写一条，doc_id 用 `{asOf}-{卡名slug}-daily`（跟 `watchlist` 用同一个
+slug 规则，`asOf` 就是这次数据的日期），内容：
+```
+{
+  date: asOf, name, mtgoId: primaryMtgoId, source: "daily",
+  verdict, direction: "rise" | null,   // 跟这张卡写进 watchlist 文档的字段保持一致
+  priceAtCall: bestPrice, horizonDays: 30, rarity,
+  scored: false, scoredAt: null, priceAtHorizon: null, actualChgPct: null, hit: null
+}
+```
+这一步只是"存一份档"，不影响 `watchlist` 集合本身的写法，两者并行写、互不覆盖。已经存在的
+`verdict_log` 文档（doc_id 相同，同一天对同一张卡重复跑）会被覆盖成最新一次的研判，这是预期
+行为，不是 bug。
 
 ### 5. 通知（可选）
 
