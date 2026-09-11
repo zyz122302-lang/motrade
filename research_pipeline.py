@@ -49,12 +49,20 @@ BR_EVENTS_IMPORT_PATH = DATA_DIR / "br_events_import.json"
 PRICE_HISTORY_MAX_POINTS = 30
 
 LOOKAHEAD_WINDOWS = [7, 14, 30]   # 同时训练这几个预测窗口（天）
-DISPLAY_MIN_PROB = 0.5            # 仪表盘只展示预测反弹概率超过这个阈值的候选
+DISPLAY_MIN_PROB = 0.5            # 仪表盘只展示预测概率超过这个阈值的候选
 DISPLAY_MAX_PER_WINDOW = 10       # 每个窗口最多保留几张（概率降序截断）
-REBOUND_THRESHOLD = 0.08          # 涨幅 >= 8% 算反弹（正类），三个窗口用同一个阈值——
-                                   # 注意这意味着窗口越长，达到阈值天然越容易，
+REBOUND_THRESHOLD = 0.08          # "反弹"板块：涨幅 >= 8% 算反弹（正类）
+DECLINE_THRESHOLD = 0.10          # "持续下跌"板块：跌幅 >= 10% 算继续下跌（正类）——
+                                   # 两个板块是镜像的两个独立二分类问题，共用同一份
+                                   # 特征矩阵（同一批锚点），只是标签方向和阈值不同，
+                                   # 分别训练模型，不是同一个模型出两个数字。
+                                   # 注意窗口越长，两个方向的阈值天然都越容易达到，
                                    # 三个窗口的正类比例不可直接比较"预测难度"，
                                    # 只能比较各自窗口内 模型 vs 基线 的相对提升
+PANELS = (
+    {"key": "rebound", "label": "反弹", "threshold": REBOUND_THRESHOLD, "probField": "predictedReboundProb"},
+    {"key": "decline", "label": "持续下跌", "threshold": DECLINE_THRESHOLD, "probField": "predictedDeclineProb"},
+)
 ANCHOR_STRIDE_DAYS = 10           # 同一张卡每隔多少天取一个训练锚点
 MIN_HISTORY_FOR_ANCHOR = 35       # 锚点之前至少要有这么多天历史才够算 chg_30d 等特征
 MAX_CANDIDATE_NAMES = 1200        # 训练用的卡名上限（按今日价格从高到低截取）
@@ -327,12 +335,13 @@ def _feature_row(ind: dict, price: float, info: dict, extra: dict) -> dict:
 def build_dataset(conn, universe: list[dict], usage_idx: dict, br_idx: dict, set_first_seen: dict):
     """回溯遍历每张卡的历史价格序列，每隔 ANCHOR_STRIDE_DAYS 天取一个锚点。
     返回 (rows, labels_by_window, anchor_dates)，labels_by_window 是
-    {window_days: [0/1, ...]}，跟 rows/anchor_dates 一一对应（同一组锚点，
-    只是标签窗口不同，方便三个窗口共用同一份特征矩阵）。
+    {window_days: {"rebound": [0/1, ...], "decline": [0/1, ...]}}，都跟
+    rows/anchor_dates 一一对应（同一组锚点、同一份特征矩阵，"反弹"和"持续下跌"
+    两个板块只是标签方向/阈值不同，不需要分别回溯两遍）。
     """
     max_window = max(LOOKAHEAD_WINDOWS)
     rows, anchor_dates = [], []
-    labels_by_window = {w: [] for w in LOOKAHEAD_WINDOWS}
+    labels_by_window = {w: {"rebound": [], "decline": []} for w in LOOKAHEAD_WINDOWS}
 
     for info in universe:
         mid = info["mtgo_id"]
@@ -366,7 +375,8 @@ def build_dataset(conn, universe: list[dict], usage_idx: dict, br_idx: dict, set
             rows.append(_feature_row(ind, anchor_price, info, extra))
             anchor_dates.append(anchor_date_str)
             for w in LOOKAHEAD_WINDOWS:
-                labels_by_window[w].append(1 if future_prices[w] >= anchor_price * (1 + REBOUND_THRESHOLD) else 0)
+                labels_by_window[w]["rebound"].append(1 if future_prices[w] >= anchor_price * (1 + REBOUND_THRESHOLD) else 0)
+                labels_by_window[w]["decline"].append(1 if future_prices[w] <= anchor_price * (1 - DECLINE_THRESHOLD) else 0)
 
     return rows, labels_by_window, anchor_dates
 
@@ -452,7 +462,10 @@ def train_one_window(X: np.ndarray, y: list[int], anchor_dates: list[str]):
     return model, metrics
 
 
-def score_today(conn, models: dict, universe: list[dict], today_prices: dict, usage_idx: dict, br_idx: dict, set_first_seen: dict):
+def score_today(conn, models_by_panel: dict, universe: list[dict], today_prices: dict, usage_idx: dict, br_idx: dict, set_first_seen: dict):
+    """models_by_panel: {panel_key: {window_days: model, ...}, ...}。返回
+    {panel_key: {window_days: [candidate, ...], ...}, ...} —— 两个板块共用同一份
+    今日特征矩阵（跟训练时一样，只是标签方向不同），各自套自己的模型打分。"""
     today = date.today()
     today_str = today.isoformat()
     feats, meta = [], []
@@ -476,19 +489,24 @@ def score_today(conn, models: dict, universe: list[dict], today_prices: dict, us
             "chg7d": ind.get("chg_7d_pct"), "chg30d": ind.get("chg_30d_pct"),
         })
     if not feats:
-        return {}
+        return {p["key"]: {} for p in PANELS}
     X = _to_matrix(feats)
     out = {}
-    for w, model in models.items():
-        probs = model.predict(X, num_iteration=model.best_iteration)
-        ranked = sorted(
-            ({**m, "predictedReboundProb": round(float(p), 4)} for m, p in zip(meta, probs)),
-            key=lambda r: -r["predictedReboundProb"],
-        )
-        # 只展示真的过了概率门槛的，不为了凑数塞进排名靠前但其实没到50%的候选——
-        # 某个窗口这周一个都没过线是正常现象，仪表盘会如实显示"没有候选"，不用硬凑10个
-        shown = [r for r in ranked if r["predictedReboundProb"] > DISPLAY_MIN_PROB][:DISPLAY_MAX_PER_WINDOW]
-        out[w] = shown
+    prob_field_by_key = {p["key"]: p["probField"] for p in PANELS}
+    for panel_key, models in models_by_panel.items():
+        prob_field = prob_field_by_key[panel_key]
+        panel_out = {}
+        for w, model in models.items():
+            probs = model.predict(X, num_iteration=model.best_iteration)
+            ranked = sorted(
+                ({**m, prob_field: round(float(p), 4)} for m, p in zip(meta, probs)),
+                key=lambda r: -r[prob_field],
+            )
+            # 只展示真的过了概率门槛的，不为了凑数塞进排名靠前但其实没到50%的候选——
+            # 某个窗口这周一个都没过线是正常现象，仪表盘会如实显示"没有候选"，不用硬凑10个
+            shown = [r for r in ranked if r[prob_field] > DISPLAY_MIN_PROB][:DISPLAY_MAX_PER_WINDOW]
+            panel_out[w] = shown
+        out[panel_key] = panel_out
     return out
 
 
@@ -538,24 +556,30 @@ def run():
                   f"set_age_days={coverage['set_age_days']} br_event_recent={coverage['br_event_recent']}")
 
             X = _to_matrix(rows)
-            windows_out = {}
-            models = {}
+            models_by_panel = {p["key"]: {} for p in PANELS}
+            panels_out = {p["key"]: {"label": p["label"], "threshold": p["threshold"], "windows": {}} for p in PANELS}
             for w in LOOKAHEAD_WINDOWS:
-                print(f"[train] window={w}d training LightGBM classifier ...")
-                model, metrics = train_one_window(X, labels_by_window[w], anchor_dates)
-                print(f"[train] window={w}d valid accuracy={metrics['validAccuracy']} "
-                      f"baseline={metrics['baselineAccuracy']} auc={metrics['validAuc']}")
-                models[w] = model
-                windows_out[str(w)] = metrics
+                for p in PANELS:
+                    print(f"[train] panel={p['key']} window={w}d training LightGBM classifier ...")
+                    model, metrics = train_one_window(X, labels_by_window[w][p["key"]], anchor_dates)
+                    print(f"[train] panel={p['key']} window={w}d valid accuracy={metrics['validAccuracy']} "
+                          f"baseline={metrics['baselineAccuracy']} auc={metrics['validAuc']}")
+                    models_by_panel[p["key"]][w] = model
+                    panels_out[p["key"]]["windows"][str(w)] = metrics
 
-            print("[score] scoring today's candidate pool for all windows ...")
-            top_by_window = score_today(conn, models, universe, today_prices, usage_idx, br_idx, set_first_seen)
+            print("[score] scoring today's candidate pool for all panels/windows ...")
+            top_by_panel_window = score_today(conn, models_by_panel, universe, today_prices, usage_idx, br_idx, set_first_seen)
 
             print("[enrich] fetching Cardhoarder prices for version enrichment ...")
             cardhoarder_prices = scryfall_fetcher.fetch_cardhoarder_prices_by_mtgo_id()
 
-            candidate_names = {c["name"] for w in LOOKAHEAD_WINDOWS for c in top_by_window.get(w, [])}
-            print(f"[enrich] building full version data for {len(candidate_names)} candidate names "
+            candidate_names = {
+                c["name"]
+                for p in PANELS
+                for w in LOOKAHEAD_WINDOWS
+                for c in top_by_panel_window.get(p["key"], {}).get(w, [])
+            }
+            print(f"[enrich] building full version data for {len(candidate_names)} candidate names across both panels "
                   f"(so clicking any of them in the dashboard gets the same detail view as a daily-watchlist card) ...")
 
             candidate_version_ids = collect_version_ids_for_names(conn, candidate_names)
@@ -568,12 +592,14 @@ def run():
             versions_by_candidate = build_versions_for_names(conn, candidate_names, today_prices, cardhoarder_prices)
 
             all_version_mtgo_ids = set()
-            for w in LOOKAHEAD_WINDOWS:
-                for c in top_by_window.get(w, []):
-                    vs = versions_by_candidate.get(c["name"], [])
-                    c["versions"] = vs
-                    all_version_mtgo_ids.update(v["mtgoId"] for v in vs)
-                windows_out[str(w)]["topCandidates"] = top_by_window.get(w, [])
+            for p in PANELS:
+                for w in LOOKAHEAD_WINDOWS:
+                    candidates = top_by_panel_window.get(p["key"], {}).get(w, [])
+                    for c in candidates:
+                        vs = versions_by_candidate.get(c["name"], [])
+                        c["versions"] = vs
+                        all_version_mtgo_ids.update(v["mtgoId"] for v in vs)
+                    panels_out[p["key"]]["windows"][str(w)]["topCandidates"] = candidates
 
             price_history_export = build_price_history_export(conn, all_version_mtgo_ids)
             PRICE_HISTORY_EXPORT_PATH.write_text(json.dumps(price_history_export, ensure_ascii=False), encoding="utf-8")
@@ -582,11 +608,10 @@ def run():
             output = {
                 "runDate": date.today().isoformat(),
                 "status": "ok",
-                "reboundThreshold": REBOUND_THRESHOLD,
                 "universeSize": len(universe),
                 "totalAnchorRows": len(rows),
                 "featureCoverage": coverage,
-                "windows": windows_out,
+                "panels": panels_out,
             }
 
         DATA_DIR.mkdir(parents=True, exist_ok=True)

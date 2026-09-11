@@ -450,19 +450,24 @@
     <section class="panel" style="border:none;padding:0;margin-bottom:0;">
       <p class="panel-note">
         每周离线跑一次的探索性研究，不是每日流程的一部分，也不直接决定仪表盘上的研判结论——
-        用 GoatBots 两年历史卖价回溯构造"出现某个信号后 7/14/30 天价格是否真的涨了8%以上"的
-        训练样本，同时训练三个预测窗口的 LightGBM 模型，特征除了价格历史，还有赛制使用率、
-        官方禁限事件、系列发售时间（数据驱动近似值），跟
-        <code>strategies/supply_vs_demand_framework.yaml</code> 里写的人工规则互相印证。
-        使用率/禁限事件这两类特征才刚开始积累历史，覆盖率会随时间推移自然提高——下面的
-        "特征覆盖率"如实显示当前状态。每个窗口只保留预测反弹概率超过50%的候选，最多10张
-        （不够10张就有几张显示几张，某个窗口一张都没有是正常情况，不会硬凑）；每张入选的
-        候选卡都会像每日观察池一样套用 <code>strategies/*.yaml</code> 做研判、异常涨跌先
-        WebSearch 核实，附上"研判"标签和结论笔记，不是只给一个裸概率数字。
+        用 GoatBots 两年历史卖价回溯构造训练样本，分两个板块：<strong>反弹</strong>（某信号出现后
+        价格是否会涨超阈值）和<strong>持续下跌</strong>（是否会继续跌超阈值），每个板块下都
+        同时训练 7/14/30 三个预测窗口的 LightGBM 模型（两个板块是各自独立的二分类问题，
+        不是同一个模型的两面）。特征除了价格历史，还有赛制使用率、官方禁限事件、系列发售时间
+        （数据驱动近似值），跟 <code>strategies/supply_vs_demand_framework.yaml</code> 里写的
+        人工规则互相印证。使用率/禁限事件这两类特征才刚开始积累历史，覆盖率会随时间推移自然
+        提高——下面的"特征覆盖率"如实显示当前状态。每个板块的每个窗口只保留预测概率超过50%的
+        候选，最多10张（不够10张就有几张显示几张，某个窗口一张都没有是正常情况，不会硬凑）；
+        每张入选的候选卡都会像每日观察池一样套用 <code>strategies/*.yaml</code> 做研判、
+        异常涨跌先 WebSearch 核实，附上"研判"标签和结论笔记，不是只给一个裸概率数字。
         <strong>预测概率仅供参考，不是交易建议</strong>。
       </p>
       <div id="research-empty" class="empty-state" hidden>还没有研究结果，等每周研究任务跑一次。</div>
       <div id="research-body" hidden>
+        <div class="win-filter" id="research-panel-filter" style="margin-bottom:8px;">
+          <button class="fmt-btn active" data-panel="rebound">反弹</button>
+          <button class="fmt-btn" data-panel="decline">持续下跌</button>
+        </div>
         <div class="win-filter" id="research-window-filter">
           <button class="fmt-btn" data-window="7">7天窗口</button>
           <button class="fmt-btn active" data-window="14">14天窗口</button>
@@ -470,12 +475,12 @@
         </div>
         <div class="ledger" id="research-ledger" style="margin-bottom:16px;"></div>
         <p class="panel-note" id="research-coverage" style="margin-bottom:18px;"></p>
-        <h3 style="font-size:15px;margin-bottom:8px;">特征重要性（模型认为哪些指标最能预测反弹）</h3>
+        <h3 style="font-size:15px;margin-bottom:8px;" id="research-importance-head">特征重要性（模型认为哪些指标最能预测反弹）</h3>
         <div id="research-importance" style="margin-bottom:22px;"></div>
-        <h3 style="font-size:15px;margin-bottom:8px;">预测反弹概率 &gt; 50% 的候选（按概率降序，点卡名可查看详情）</h3>
+        <h3 style="font-size:15px;margin-bottom:8px;" id="research-table-head">预测反弹概率 &gt; 50% 的候选（按概率降序，点卡名可查看详情）</h3>
         <div class="table-wrap">
           <table id="research-table">
-            <thead><tr><th>卡牌</th><th>研判</th><th class="num">现价</th><th class="num">7日</th><th class="num">30日</th><th class="num">预测反弹概率</th></tr></thead>
+            <thead><tr><th>卡牌</th><th>研判</th><th class="num">现价</th><th class="num">7日</th><th class="num">30日</th><th class="num" id="research-table-prob-head">预测反弹概率</th></tr></thead>
             <tbody id="research-table-body"></tbody>
           </table>
         </div>
@@ -809,31 +814,45 @@
     set_age_days: '系列上线天数(推算)', br_event_recent: '近30日禁限变动',
   };
   var currentResearchRun = null;
+  var currentResearchPanel = 'rebound';
   var currentResearchWindow = '14';
   var researchCandidatesByMtgoId = {};
+  var RESEARCH_PANEL_META = {
+    rebound: { label: '反弹', dirWord: '涨', probField: 'predictedReboundProb', probLabel: '预测反弹概率', impHead: '特征重要性（模型认为哪些指标最能预测反弹）', tableHead: '预测反弹概率 > 50% 的候选（按概率降序，点卡名可查看详情）', emptyMsg: '这个窗口本周没有预测反弹概率超过50%的候选——模型打分整体偏保守是正常现象，不代表没有值得关注的卡，可以换个窗口看看，或者参考"下跌观察/上涨观察"里 Claude 的研判。' },
+    decline: { label: '持续下跌', dirWord: '跌', probField: 'predictedDeclineProb', probLabel: '预测下跌概率', impHead: '特征重要性（模型认为哪些指标最能预测持续下跌）', tableHead: '预测下跌概率 > 50% 的候选（按概率降序，点卡名可查看详情——这是风险提示，不是"该抄底"的意思）', emptyMsg: '这个窗口本周没有预测下跌概率超过50%的候选，说明模型没看到明显的"还会继续跌"的信号，不代表价格一定企稳。' },
+  };
 
   function renderResearch(run) {
     currentResearchRun = run;
     var empty = document.getElementById('research-empty');
     var body = document.getElementById('research-body');
-    if (!run || run.status !== 'ok') {
+    if (!run || run.status !== 'ok' || !run.panels) {
       empty.hidden = false; body.hidden = true;
       if (run && run.status === 'insufficient_data') empty.textContent = run.message || '数据量不够，本次跳过。';
       return;
     }
     empty.hidden = true; body.hidden = false;
-    renderResearchWindow(currentResearchWindow);
+    renderResearchPanelWindow();
   }
 
-  function renderResearchWindow(windowKey) {
+  function renderResearchPanelWindow() {
     var run = currentResearchRun;
-    if (!run || !run.windows) return;
-    var w = run.windows[windowKey];
+    if (!run || !run.panels) return;
+    var panel = run.panels[currentResearchPanel];
+    if (!panel) return;
+    var w = (panel.windows || {})[currentResearchWindow];
     if (!w) return;
-    currentResearchWindow = windowKey;
-    document.querySelectorAll('#research-window-filter .fmt-btn').forEach(function (b) {
-      b.classList.toggle('active', b.getAttribute('data-window') === windowKey);
+    var meta = RESEARCH_PANEL_META[currentResearchPanel];
+
+    document.querySelectorAll('#research-panel-filter .fmt-btn').forEach(function (b) {
+      b.classList.toggle('active', b.getAttribute('data-panel') === currentResearchPanel);
     });
+    document.querySelectorAll('#research-window-filter .fmt-btn').forEach(function (b) {
+      b.classList.toggle('active', b.getAttribute('data-window') === currentResearchWindow);
+    });
+    document.getElementById('research-importance-head').textContent = meta.impHead;
+    document.getElementById('research-table-head').innerHTML = meta.tableHead;
+    document.getElementById('research-table-prob-head').textContent = meta.probLabel;
 
     document.getElementById('research-ledger').innerHTML =
       '<div class="tile"><div class="label">训练日期</div><div class="value mono">' + escapeHtml(run.runDate || '—') + '</div></div>' +
@@ -841,7 +860,7 @@
       '<div class="tile"><div class="label">验证集准确率</div><div class="value gold mono">' + fmtPct(w.validAccuracy) + '</div></div>' +
       '<div class="tile"><div class="label">基线准确率</div><div class="value mono">' + fmtPct(w.baselineAccuracy) + '</div></div>' +
       '<div class="tile"><div class="label">AUC</div><div class="value mono">' + (w.validAuc == null ? '—' : w.validAuc) + '</div></div>' +
-      '<div class="tile"><div class="label">预测窗口</div><div class="value mono">' + windowKey + ' 天涨' + fmtPct(run.reboundThreshold) + '</div></div>';
+      '<div class="tile"><div class="label">预测窗口</div><div class="value mono">' + currentResearchWindow + ' 天' + meta.dirWord + '超' + fmtPct(panel.threshold) + '</div></div>';
 
     var cov = run.featureCoverage || {};
     var covBits = ['usage_modern', 'usage_legacy', 'br_event_recent', 'set_age_days'].map(function (k) {
@@ -863,7 +882,7 @@
     researchCandidatesByMtgoId = {};
     // 后端（research_pipeline.py）已经按 >50% 概率筛过、每个窗口最多留10张，
     // 这里的过滤/截断是防御性的，避免旧缓存数据或异常情况下表格显示超出预期
-    var cands = (w.topCandidates || []).filter(function (r) { return r.predictedReboundProb > 0.5; }).slice(0, 10);
+    var cands = (w.topCandidates || []).filter(function (r) { return r[meta.probField] > 0.5; }).slice(0, 10);
     cands.forEach(function (r) { researchCandidatesByMtgoId[r.mtgoId] = r; });
     document.getElementById('research-table-body').innerHTML = cands.map(function (r) {
       return '<tr class="card-row" data-mtgo-id="' + r.mtgoId + '"><td class="card-name">' + escapeHtml(r.name) + '</td>' +
@@ -871,8 +890,8 @@
         '<td class="num price">' + fmtTix(r.price) + '</td>' +
         '<td class="num">' + chgHtml(r.chg7d) + '</td>' +
         '<td class="num">' + chgHtml(r.chg30d) + '</td>' +
-        '<td class="num price">' + fmtPct(r.predictedReboundProb) + '</td></tr>';
-    }).join('') || '<tr><td colspan="6" class="panel-note">这个窗口本周没有预测反弹概率超过50%的候选——模型打分整体偏保守是正常现象，不代表没有值得关注的卡，可以换个窗口看看，或者参考"下跌观察/上涨观察"里 Claude 的研判。</td></tr>';
+        '<td class="num price">' + fmtPct(r[meta.probField]) + '</td></tr>';
+    }).join('') || '<tr><td colspan="6" class="panel-note">' + escapeHtml(meta.emptyMsg) + '</td></tr>';
   }
 
   function fmtPct(x) {
@@ -1456,8 +1475,11 @@
       });
     });
 
+    document.querySelectorAll('#research-panel-filter .fmt-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () { currentResearchPanel = btn.getAttribute('data-panel'); renderResearchPanelWindow(); });
+    });
     document.querySelectorAll('#research-window-filter .fmt-btn').forEach(function (btn) {
-      btn.addEventListener('click', function () { renderResearchWindow(btn.getAttribute('data-window')); });
+      btn.addEventListener('click', function () { currentResearchWindow = btn.getAttribute('data-window'); renderResearchPanelWindow(); });
     });
     document.getElementById('research-table-body').addEventListener('click', function (ev) {
       var tr = ev.target.closest('tr.card-row');

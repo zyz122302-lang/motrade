@@ -39,11 +39,17 @@ MTGTop8 线下 2 星以上赛事牌表（只做 Modern/Legacy，每个赛制取�
 
 ## 每周研究任务（另一个独立的定时任务，不是这个技能负责触发）
 
-`research_pipeline.py` 用 GoatBots 两年历史卖价回溯构造"某个信号出现后 7/14/30 天价格是否
-真的涨了8%以上"的训练样本，同时训练三个预测窗口的 LightGBM 分类器，目的是**校准**
-`strategies/*.yaml` 里的人工规则（尤其是 `supply_vs_demand_framework.yaml`），不是替代它，
-也**不接入本技能的每日流程**——由另一个 routine（每周日 09:00 UTC 跑一次，比每日流程慢
-得多，要下载多年历史归档）单独触发。
+`research_pipeline.py` 用 GoatBots 两年历史卖价回溯构造训练样本，分两个**板块**（互相独立的
+二分类问题，共用同一份特征矩阵/同一批训练锚点，只是标签方向和阈值不同）：
+- **反弹板块**（`rebound`）：某个信号出现后，价格是否会涨超过 8%（`REBOUND_THRESHOLD`）。
+- **持续下跌板块**（`decline`）：价格是否会继续跌超过 10%（`DECLINE_THRESHOLD`）——这是给
+  已经在跌的卡做"还会不会继续跌"的风险提示，不是"预测该抄底"，跟反弹板块的解读方向相反，
+  写研判时不要把两个板块的候选混着套同一套措辞。
+
+每个板块下都**同时**训练 7/14/30 三个预测窗口的 LightGBM 分类器（一共 6 个模型：
+2 板块 × 3 窗口）。目的是**校准** `strategies/*.yaml` 里的人工规则（尤其是
+`supply_vs_demand_framework.yaml`），不是替代它，也**不接入本技能的每日流程**——由另一个
+routine（每周日 09:00 UTC 跑一次，比每日流程慢得多，要下载多年历史归档）单独触发。
 
 特征除了价格历史，还包括赛制使用率、官方禁限事件、系列发售时间（数据驱动近似值，不额外
 抓取新数据源）。该 routine 跑 `research_pipeline.py` **之前**要先做两步桥接（用 Artifact
@@ -60,27 +66,41 @@ MTGTop8 线下 2 星以上赛事牌表（只做 Modern/Legacy，每个赛制取�
 一段时间才会明显提高），`research_output.json` 里的 `featureCoverage` 字段会如实报告每个
 特征的非缺失比例，不需要因为覆盖率低就怀疑代码有问题——这是数据积累时间不够的正常反映。
 
-产出写进仪表盘数据库的 `research_runs/latest` 文档（结构：`{runDate, status, reboundThreshold,
-universeSize, totalAnchorRows, featureCoverage, windows: {"7": {...}, "14": {...}, "30": {...}}}`，
-每个窗口下有自己的 `trainRows`/`validRows`/`validAccuracy`/`baselineAccuracy`/`validAuc`/
-`featureImportance`/`topCandidates`），前端"数据研究"页签有窗口切换按钮，直接展示各窗口的
-模型表现和特征重要性，供参考，不影响每日研判逻辑。
+产出写进仪表盘数据库的 `research_runs/latest` 文档（结构：`{runDate, status, universeSize,
+totalAnchorRows, featureCoverage, panels: {"rebound": {label, threshold, windows: {"7": {...},
+"14": {...}, "30": {...}}}, "decline": {label, threshold, windows: {...}}}}`，每个窗口下有
+自己的 `trainRows`/`validRows`/`validAccuracy`/`baselineAccuracy`/`validAuc`/
+`featureImportance`/`topCandidates`），前端"数据研究"页签有板块切换 + 窗口切换两层按钮，
+直接展示各板块各窗口的模型表现和特征重要性，供参考，不影响每日研判逻辑。
 
-`topCandidates` 已经在 `research_pipeline.py` 里按预测反弹概率 >50% 过滤、每个窗口最多截断到
-10 张（见脚本里的 `DISPLAY_MIN_PROB`/`DISPLAY_MAX_PER_WINDOW`），routine **不需要**自己再做
-这层过滤/截断，但**需要**给每个窗口筛出来的候选卡逐一研判——不能只把裸的 `predictedReboundProb`
-数字丢给用户。研判方法跟每日本技能第 2 步完全一样：
+`topCandidates` 已经在 `research_pipeline.py` 里按预测概率 >50% 过滤、每个板块每个窗口最多
+截断到 10 张（见脚本里的 `DISPLAY_MIN_PROB`/`DISPLAY_MAX_PER_WINDOW`），routine **不需要**
+自己再做这层过滤/截断，但**需要**给两个板块、每个窗口筛出来的候选卡逐一研判——不能只把裸的
+`predictedReboundProb`/`predictedDeclineProb` 数字丢给用户。反弹板块的候选卡字段是
+`predictedReboundProb`，持续下跌板块是 `predictedDeclineProb`，两个板块合计最多 60 张候选
+（2 板块 × 3 窗口 × 10 张），研判方法跟每日本技能第 2 步基本一致，但方向解读不同：
 - 参考 `strategies/*.yaml`（尤其是 `supply_vs_demand_framework.yaml`——研究流水线的模型信号
   本身不知道供给/需求驱动的区别，这一步就是补上这个判断），给每张候选卡定性成
   `stabilizing`/`falling_knife`/`established`/`momentum`/`caution` 里的一个（取值必须是这几个
   英文 key，仪表盘按这几个渲染）。
-- 候选卡如果是纯指挥官(EDH)/收藏向/Un-系列卡（不在摩登/薪传竞技环境里，哪怕 Scryfall 判定它
-  "legal"），要在 note 里点破——这类卡的赛制合法性对模型来说是"合法"，但实际没有竞技情报支撑，
-  信号可信度天然更低，一般应该标 `caution`。
+- **反弹板块**：模型预测"会涨"，判断这个信号能不能追溯到真实的需求端证据（解禁、新套牌采用、
+  赛制合法性变化），能就可以标 `momentum`/`established`，找不到证据的（尤其是低基数补价这类）
+  倾向 `caution`，规则跟每日本技能第 2 步的"反弹判断"完全一样。
+- **持续下跌板块**：模型预测"会继续跌"，这是风险提示不是买入信号——如果能确认下跌还在加速
+  （比如 `|chg_7d_pct|/|chg_30d_pct|` 比值高）或者有具体利空（新禁令、供给持续释放且没有见底
+  迹象），倾向标 `falling_knife`，提醒"还没到抄底的时候"；如果价格已经跌了很久、模型只是
+  基于历史相似形态给出较高的继续下跌概率但近期跌势其实已经放缓，如实在 note 里点破这种
+  "模型信号跟当前技术面出现分歧"的情况，标 `caution`，不要因为板块叫"持续下跌"就无脑标
+  `falling_knife`。
+- 两个板块的候选卡如果是纯指挥官(EDH)/收藏向/Un-系列卡（不在摩登/薪传竞技环境里，哪怕
+  Scryfall 判定它"legal"），要在 note 里点破——这类卡的赛制合法性对模型来说是"合法"，但实际
+  没有竞技情报支撑，信号可信度天然更低，一般应该标 `caution`。
 - 涨跌幅明显、原因不确定的，先 `WebSearch` 核实（跟每日流程同一条规则，不要凭训练知识猜，
   确实搜不到就如实写"原因未确认"）。
-- 如果某张候选卡名字跟当日 `watchlist` 集合里的卡重复（比如同一张卡这周同时被两边选中），
-  直接沿用当日观察池那边已经写好的研判结论，保持口径一致，不要重新编一套不一样的说法。
+- 如果某张候选卡名字跟当日 `watchlist` 集合里的卡重复（比如同一张卡这周同时被选中），直接
+  沿用当日观察池那边已经写好的研判结论，保持口径一致，不要重新编一套不一样的说法；同一张卡
+  如果同时出现在反弹板块和持续下跌板块（不同窗口给出相反方向的高概率预测，理论上可能发生），
+  在两边的 note 里都如实说明这个矛盾，不要各写各的、互相打架。
 - 把结果写回每个候选卡对象的 `verdict`/`note` 字段（跟每日 `watchlist` 文档同一套字段名），
   再整体写入 `research_runs/latest`。
 
