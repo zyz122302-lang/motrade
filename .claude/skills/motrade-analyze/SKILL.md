@@ -145,13 +145,44 @@ WebSearch 核实原因"的规则是同一件事，不用另外单独跑一遍。
 这一步是可选的、事件驱动的（只有真的观察到供给释放迹象时才写，不用每天硬凑），不像禁限公告监控
 那样是每天固定要跑的步骤。
 
+## MTGO 综合资讯监控（首页"最新资讯"板块，判断尺度交给你自己把握，本技能自己负责，每天都跑）
+
+首页的"最新资讯"板块**不能只有禁限赛制公告**——用户明确要求过这一点。禁限公告只是"情报面"里最
+确定的一类信号，但 MTGO 客户端更新、新系列上线/维护窗口安排、赛事结构变化（比如 Challenge/
+League 的奖励结构调整、Qualifier 积分规则变化）等，只要可能影响到单卡或 Treasure Chest 的
+供给/需求，都值得记录。**这里没有确定性代码可以判断"这条新闻算不算数"，需要你自己看着办**：
+
+- 每天（或至少每周）`WebSearch` 一下 "MTGO weekly announcement" + 本周日期、或直接看
+  `mtgo.com/news` 最新几条，扫一眼有没有值得记的东西。不需要每天都有新发现——大多数周可能
+  什么都不用写，平淡的客户端维护通知、纯娱乐性内容不需要记录。
+- 判断标准：这条消息会不会让某类卡（或 Treasure Chest 本身）的供给或需求发生变化？例如新系列
+  上线日期（供给面，跟前面"MTGO 新系列上线"那段是同一件事，两边可以共用一条事件）、赛制轮替、
+  赛事奖励结构调整（直接影响 Treasure Chest 的发放频率，见下一节）、客户端重大功能变化影响交易
+  便利性等。纯粹的活动宣传、UI 更新这类不影响供需的内容不用记。
+- 判断结果用 `write_db`（`db_op: "set"`）写一条 `news_events` 集合的文档，doc_id 用
+  `{date}-mtgo-{关键词slug}`（如 `2026-09-01-mtgo-reality-fracture`），内容：
+  ```
+  { date, type: "mtgo_news", format: "", summary: "一句话中文说明这件事以及可能的利空/利好方向" }
+  ```
+  `format` 留空字符串即可（这类消息通常不是针对单一赛制）。
+
 ## Treasure Chest 价格追踪（仪表盘首页专属板块，本技能自己负责，每天都跑）
 
 Treasure Chest 是 MTGO 独有的可交易物品（不是印刷的 Magic 卡牌，GoatBots 把它记成
 `cardset="O99"`、`rarity="Booster"` 的特殊条目），`watchlist_builder.py` 的
 `NORMAL_RARITIES` 过滤规则天然把它排除在候选池外，所以它**永远不会出现在下跌/上涨观察
-列表里**——只在仪表盘首页有专属的价格 + 走势图板块，逻辑上和普通单卡研判完全分开，不需要
-套用 `strategies/*.yaml` 里的研判框架。
+列表里**——仪表盘首页有专属的价格 + 走势图板块，点进去是它自己的详情页（跟单卡详情页布局
+一致，复用同一套 `note-box`/`verdict-chip` 组件），但**不套用** `strategies/*.yaml`
+里针对单卡赛制供需写的那套框架（它没有"赛制使用率""禁限赛制"这些概念）。
+
+**Treasure Chest 自己的供需框架（写 note 前先想一遍）**：它的价格本质是"开一个箱子的期望
+价值"的实时定价，供给端取决于玩家参与 Challenge 等赛事的频率（赢得的箱子数量），需求端取决于
+想拆箱子换取内容物（Play Points/单卡/神器代币等）的玩家数量，两者通常都比较稳定，不会像单卡
+那样出现"禁令"这类突发利空。官方会定期刷新箱内内容概率表（大约每3-4周一次，可以
+`WebSearch` "MTGO Treasure Chest contents update" 查最近一次和下一次刷新日期），这通常是
+它价格波动最主要的来源；除此之外，赛事奖励结构变化（比如 Challenge 改成用箱子发奖还是用
+Play Points 发奖）也会直接影响它的供给。多数时候它的价格会在一个比较窄的区间里稳定波动，
+这种"稳定"本身就是正常状态，不代表有交易信号，不要为了凑研判硬找一个方向性结论。
 
 步骤：
 1. 先做一次桥接（跟"每日赛事使用率"那一节的思路一样，避免每天重新下载两年历史）：
@@ -164,11 +195,16 @@ Treasure Chest 是 MTGO 独有的可交易物品（不是印刷的 Magic 卡牌�
 2. `python fetch_treasure_chest.py`——输出 `data/treasure_chest.json`，结构：
    `{ mtgoId, name, cardset, asOf, price, chg_7d_pct, chg_30d_pct, chg_90d_pct, low_90d,
    high_90d, ma7, ma30, days_of_history, series }`。
-3. 用 `write_db`（`db_op: "set"`）把这份 JSON 拆成两份写：
-   - 去掉 `series` 字段后的其余内容，写到 `special_items/treasure_chest`（首页价格面板
-     直接读这个文档，字段名跟 `data/treasure_chest.json` 里的保持一致，不用转驼峰）。
+3. 参考上面的框架给这次的价格走势定性成 `stabilizing`/`falling_knife`/`established`/
+   `momentum`/`caution` 里的一个（复用单卡那几个 key，方便仪表盘统一渲染，含义按 Treasure
+   Chest 自己的逻辑理解，不是按单卡赛制供需理解），写一两句 `note`（现价、7日/30日变动、
+   是否有已知的内容刷新/赛事结构变化能解释走势，解释不了就如实写"正常区间内波动，无信号"），
+   把这两个字段加进第2步的 JSON 里。
+4. 用 `write_db`（`db_op: "set"`）把（加了 `verdict`/`note` 之后的）这份 JSON 拆成两份写：
+   - 去掉 `series` 字段后的其余内容，写到 `special_items/treasure_chest`（首页价格面板和
+     详情页都读这个文档，字段名保持跟 `data/treasure_chest.json` 一致，不用转驼峰）。
    - 只取 `series` 字段，包成 `{series: [...]}`，写到 `price_history/{mtgoId}`（跟普通
-     单卡版本共用同一个集合，仪表盘首页的走势图直接复用现成的 `buildChart` 渲染逻辑）。
+     单卡版本共用同一个集合，仪表盘的走势图直接复用现成的 `buildChart` 渲染逻辑）。
 
 ## 运行步骤
 

@@ -244,8 +244,8 @@
       <section class="panel home-info-panel">
         <div class="panel-head"><h2>市场情报总览</h2></div>
         <p class="panel-note">
-          禁限赛制公告和供给端事件（新系列上线/重印释放供给）是"情报面"里最硬的利空/利好信号，
-          经常是价格异动的真正原因，比价格本身的技术面指标更早、更确定。
+          不只是禁限赛制公告——MTGO 客户端更新、新系列/维护窗口、赛事结构变化等只要可能影响
+          单卡供需，都会记录在这里，由每日任务判断是否构成利空/利好，不局限于某一类事件。
         </p>
 
         <div class="home-sub-head">最新资讯</div>
@@ -262,7 +262,12 @@
       </section>
 
       <section class="panel home-tc-panel">
-        <div class="panel-head"><h2>Treasure Chest</h2><span id="tc-asof" class="mono" style="font-size:11px;color:var(--text-dim);"></span></div>
+        <div class="panel-head"><h2>Treasure Chest</h2>
+          <span>
+            <span id="tc-asof" class="mono" style="font-size:11px;color:var(--text-dim);margin-right:8px;"></span>
+            <button class="version-btn" id="tc-detail-btn" type="button" hidden>详情 &rarr;</button>
+          </span>
+        </div>
         <p class="panel-note">
           MTGO 独有的可交易物品（不是印刷单卡），Vintage/Legacy Challenge 等赛事的常见奖励，
           玩家之间可以像单卡一样在 GoatBots 交易它本身。不计入上面下跌/上涨观察列表，单独在这里追踪走势。
@@ -608,7 +613,7 @@
       : '—';
   }
 
-  var NEWS_TYPE_LABEL = { banned_restricted: '禁限公告', supply_open: '供给动态' };
+  var NEWS_TYPE_LABEL = { banned_restricted: '禁限公告', supply_open: '供给动态', mtgo_news: 'MTGO动态' };
   function renderNewsRow(e) {
     var text = e.summary || (
       (e.added && e.added.length ? '新增：' + e.added.join('、') : '') +
@@ -658,11 +663,14 @@
 
   var TC_NAME = 'Treasure Chest';
   var tcMtgoId = null;
+  var currentTcDoc = null;
   function renderTreasureChest(doc) {
     var empty = document.getElementById('tc-empty');
     var body = document.getElementById('tc-body');
-    if (!doc) { empty.hidden = false; body.hidden = true; return; }
-    empty.hidden = true; body.hidden = false;
+    var detailBtn = document.getElementById('tc-detail-btn');
+    currentTcDoc = doc;
+    if (!doc) { empty.hidden = false; body.hidden = true; detailBtn.hidden = true; return; }
+    empty.hidden = true; body.hidden = false; detailBtn.hidden = false;
     tcMtgoId = doc.mtgoId;
     document.getElementById('tc-asof').textContent = doc.asOf || '';
     document.getElementById('tc-price').textContent = fmtTix(doc.price);
@@ -670,22 +678,57 @@
     document.getElementById('tc-chg30').innerHTML = chgHtml(doc.chg_30d_pct);
     document.getElementById('tc-low90').textContent = fmtTix(doc.low_90d);
     document.getElementById('tc-high90').textContent = fmtTix(doc.high_90d);
-    loadTreasureChestChart();
+    loadTreasureChestChart('tc-chart-container');
   }
-  function loadTreasureChestChart() {
-    var container = document.getElementById('tc-chart-container');
+  function loadTreasureChestChart(containerId) {
+    var container = document.getElementById(containerId);
     if (!container || !tcMtgoId) return;
     container.innerHTML = '加载价格曲线…';
     if (!db) { container.innerHTML = '<div class="chart-empty">数据库不可用</div>'; return; }
     db.collection('price_history').doc(String(tcMtgoId)).get().then(function (snap) {
-      var c2 = document.getElementById('tc-chart-container');
+      var c2 = document.getElementById(containerId);
       if (!c2) return;
       if (!snap.exists) { c2.innerHTML = '<div class="chart-empty">还没有历史曲线数据</div>'; return; }
       c2.innerHTML = buildChart((snap.data() || {}).series || []);
     }).catch(function () {
-      var c2 = document.getElementById('tc-chart-container');
+      var c2 = document.getElementById(containerId);
       if (c2) c2.innerHTML = '<div class="chart-empty">加载曲线失败</div>';
     });
+  }
+
+  function renderTcDetail(doc) {
+    currentDetailReturnView = 'home';
+    switchView('detail');
+    var body = document.getElementById('detail-body');
+    if (!doc) { body.innerHTML = '<p class="panel-note">还没有 Treasure Chest 的数据。</p>'; return; }
+
+    var html = '<div class="detail-head"><div style="flex:1;"><h2>Treasure Chest</h2>' +
+      '<div class="panel-note" style="margin:4px 0 0;">MTGO 独有的可交易物品，不是印刷单卡，不适用单卡的赛制供需框架' +
+      '（见下方研判）&middot;数据日期 ' + escapeHtml(doc.asOf || '') + '</div>' +
+      '<div class="detail-price">' + fmtTix(doc.price) + ' <span style="font-size:13px;color:var(--text-dim);">TIX (GoatBots)</span></div>' +
+      '</div></div>';
+
+    html += '<div class="stat-grid">' +
+      '<div class="tile"><div class="label">7日涨跌</div><div class="value">' + chgHtml(doc.chg_7d_pct) + '</div></div>' +
+      '<div class="tile"><div class="label">30日涨跌</div><div class="value">' + chgHtml(doc.chg_30d_pct) + '</div></div>' +
+      '<div class="tile"><div class="label">90日涨跌</div><div class="value">' + chgHtml(doc.chg_90d_pct) + '</div></div>' +
+      '<div class="tile"><div class="label">90日低点</div><div class="value">' + fmtTix(doc.low_90d) + '</div></div>' +
+      '<div class="tile"><div class="label">90日高点</div><div class="value">' + fmtTix(doc.high_90d) + '</div></div>' +
+      '<div class="tile"><div class="label">MA7</div><div class="value">' + fmtTix(doc.ma7) + '</div></div>' +
+      '<div class="tile"><div class="label">MA30</div><div class="value">' + fmtTix(doc.ma30) + '</div></div>' +
+      '</div>';
+
+    html += '<div class="note-box">' + verdictChip(doc.verdict) +
+      '<div style="margin-top:8px;">' + escapeHtml(doc.note || '暂无研判说明，等待每日分析任务生成。') + '</div></div>';
+
+    html += '<div class="chart-wrap"><div class="chart-legend">' +
+      '<span><span class="sw" style="background:var(--gold);"></span>卖价（GoatBots历史）</span>' +
+      '<span><span class="sw" style="background:var(--profit);"></span>MA7</span>' +
+      '<span><span class="sw" style="background:var(--text-dim);border-top:1px dashed var(--text-dim);height:0;"></span>MA30</span>' +
+      '</div><div id="tc-detail-chart-container">加载价格曲线…</div></div>';
+
+    body.innerHTML = html;
+    loadTreasureChestChart('tc-detail-chart-container');
   }
 
   var FEATURE_LABEL = {
@@ -1329,6 +1372,8 @@
       } catch (e) { msg.textContent = '保存失败: ' + (e && e.message ? e.message : '未知错误'); msg.className = 'form-msg err full'; }
       finally { btn.disabled = false; }
     });
+
+    document.getElementById('tc-detail-btn').addEventListener('click', function () { renderTcDetail(currentTcDoc); });
 
     document.getElementById('tc-hold-form').addEventListener('submit', async function (ev) {
       ev.preventDefault();
