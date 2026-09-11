@@ -315,29 +315,43 @@
         你人工看到的 bot 收购价，手动记一笔，慢慢积累成你自己的买卖比例参考数据。
         两种查价方式都行：① MTGO 客户端里实际开一次交易看报价（最准）；
         ② 浏览器打开 goatbots.com 搜卡名，页面上买卖价都会显示（更方便，人眼查看不受限制，程序不抓取）。
-        卡多的话可以先把看到的几张一起记在备忘里，再用下面"批量粘贴录入"一次性提交，不用一张一张填表单。
+        下面四个板块按"下跌观察 / 上涨观察 / 持仓 / 手动录入"分开，前三个自动列出该板块里每张卡的
+        全部已知版本（不只是最低价那个），你查一版记一版；某个版本 bot 暂时不收就选"暂不收购"，
+        跟"还没查过、留空"是两回事，之后回来看的时候能分清哪些是真的查过。
       </p>
 
-      <div style="margin-bottom:22px;">
-        <h3 style="font-size:15px;margin-bottom:6px;">一键从观察池 + 持仓填写</h3>
-        <p class="panel-note" style="margin-bottom:10px;">
-          卡名和版本自动从"下跌观察 / 上涨观察 / 持仓"里带出来，默认是最低价版本；如果这张卡也在你的
-          持仓里，会提示你持有的是普通版还是 Foil（具体是哪个系列持仓这里存的不够细，版本框可以自己改）。
-          你只需要去查一眼买价填进去，不用自己打卡名。没填价格的行提交时会自动跳过。
-        </p>
-        <div id="quickfill-empty" class="empty-state" hidden>下跌观察 / 上涨观察 / 持仓里现在还没有卡，有数据后这里会自动出现。</div>
-        <div class="table-wrap" id="quickfill-wrap" hidden>
-          <table>
-            <thead><tr><th>卡牌</th><th>版本</th><th>Bot</th><th class="num">收购价</th></tr></thead>
-            <tbody id="quickfill-body"></tbody>
-          </table>
+      <details open style="margin-bottom:18px;">
+        <summary style="cursor:pointer;font-size:13px;font-weight:600;">下跌观察 <span id="qf-fall-count" class="badge mono" style="color:var(--text-dim);"></span></summary>
+        <div id="qf-fall-empty" class="empty-state" hidden>下跌观察里现在没有卡。</div>
+        <div class="table-wrap" id="qf-fall-wrap" hidden style="margin-top:10px;">
+          <table><thead><tr><th>卡牌</th><th>版本</th><th>Bot</th><th class="num">收购价</th></tr></thead><tbody id="qf-fall-body"></tbody></table>
         </div>
-        <button id="quickfill-save" hidden style="margin-top:10px;background:var(--gold);color:#1c1305;border:none;border-radius:6px;padding:8px 16px;font-size:13.5px;font-weight:600;cursor:pointer;">保存全部已填写的</button>
-        <div class="form-msg" id="quickfill-msg"></div>
-      </div>
+        <button class="qf-save-btn" data-section="fall" hidden style="margin-top:10px;background:var(--gold);color:#1c1305;border:none;border-radius:6px;padding:8px 16px;font-size:13.5px;font-weight:600;cursor:pointer;">保存这个板块已填写的</button>
+        <div class="form-msg" id="qf-fall-msg"></div>
+      </details>
 
-      <details style="margin-bottom:10px;">
-        <summary style="cursor:pointer;font-size:12.5px;color:var(--text-dim);">这张卡不在上面的表格里？手动录入</summary>
+      <details open style="margin-bottom:18px;">
+        <summary style="cursor:pointer;font-size:13px;font-weight:600;">上涨观察 <span id="qf-rise-count" class="badge mono" style="color:var(--text-dim);"></span></summary>
+        <div id="qf-rise-empty" class="empty-state" hidden>上涨观察里现在没有卡。</div>
+        <div class="table-wrap" id="qf-rise-wrap" hidden style="margin-top:10px;">
+          <table><thead><tr><th>卡牌</th><th>版本</th><th>Bot</th><th class="num">收购价</th></tr></thead><tbody id="qf-rise-body"></tbody></table>
+        </div>
+        <button class="qf-save-btn" data-section="rise" hidden style="margin-top:10px;background:var(--gold);color:#1c1305;border:none;border-radius:6px;padding:8px 16px;font-size:13.5px;font-weight:600;cursor:pointer;">保存这个板块已填写的</button>
+        <div class="form-msg" id="qf-rise-msg"></div>
+      </details>
+
+      <details open style="margin-bottom:18px;">
+        <summary style="cursor:pointer;font-size:13px;font-weight:600;">持仓 <span id="qf-hold-count" class="badge mono" style="color:var(--text-dim);"></span></summary>
+        <div id="qf-hold-empty" class="empty-state" hidden>持仓里现在没有卡。</div>
+        <div class="table-wrap" id="qf-hold-wrap" hidden style="margin-top:10px;">
+          <table><thead><tr><th>卡牌</th><th>版本</th><th>Bot</th><th class="num">收购价</th></tr></thead><tbody id="qf-hold-body"></tbody></table>
+        </div>
+        <button class="qf-save-btn" data-section="hold" hidden style="margin-top:10px;background:var(--gold);color:#1c1305;border:none;border-radius:6px;padding:8px 16px;font-size:13.5px;font-weight:600;cursor:pointer;">保存这个板块已填写的</button>
+        <div class="form-msg" id="qf-hold-msg"></div>
+      </details>
+
+      <details style="margin-bottom:20px;">
+        <summary style="cursor:pointer;font-size:13px;font-weight:600;">手动录入（不在以上三个板块里的卡）</summary>
         <form class="entry" id="obs-form" style="margin-top:10px;">
           <div class="full"><label for="o-name">卡牌名称</label><input id="o-name" type="text" required /></div>
           <div><label for="o-set">版本 / Set（如 PRM、MH3 F，可空）</label><input id="o-set" type="text" placeholder="例如 PRM 或 MH3 F" /></div>
@@ -345,19 +359,6 @@
           <div><label for="o-price">收购价 (TIX)</label><input id="o-price" type="number" min="0" step="0.01" required /></div>
           <button type="submit">记录买价</button>
           <div class="form-msg full" id="obs-msg"></div>
-        </form>
-      </details>
-
-      <details style="margin-bottom:20px;">
-        <summary style="cursor:pointer;font-size:12.5px;color:var(--text-dim);">一次看多张卡？批量粘贴录入</summary>
-        <form class="entry" id="obs-batch-form" style="margin-top:10px;">
-          <div class="full">
-            <label for="o-batch">每行一条，用竖线 | 分隔（卡名本身常带逗号，比如"Ragavan, Nimble Pilferer"，所以不能用逗号分隔）：
-              "卡名 | 收购价"（不分版本）或 "卡名 | 版本 | 收购价" 或 "卡名 | 版本 | 收购价 | Bot"（Bot 不填默认 GoatBots）</label>
-            <textarea id="o-batch" rows="5" placeholder="Ragavan, Nimble Pilferer | MH2 | 12.5&#10;Scroll Rack | PRM | 3.2 | Cardhoarder" style="width:100%;background:var(--paper);border:1px solid var(--line);border-radius:6px;padding:7px 9px;font-size:13.5px;color:var(--text);font-family:'IBM Plex Mono',monospace;"></textarea>
-          </div>
-          <button type="submit">批量记录</button>
-          <div class="form-msg full" id="obs-batch-msg"></div>
         </form>
       </details>
 
@@ -630,58 +631,134 @@
   }
 
   var QF_BOTS = ['GoatBots', 'Cardhoarder', '其他'];
+  var QF_SECTIONS = ['fall', 'rise', 'hold'];
 
-  function buildQuickfillRows() {
-    var map = {};
-    fallItems.concat(riseItems).forEach(function (c) {
-      var v = (c.versions || []).filter(function (x) { return String(x.mtgoId) === String(c.primaryMtgoId); })[0];
-      map[c.name] = { name: c.name, set: v ? ((v.set || '') + (v.foil ? ' F' : '')) : '', note: '' };
-    });
-    holdingItems.forEach(function (h) {
-      if (map[h.name]) {
-        map[h.name].note = '你持有' + (h.foil ? 'Foil' : '普通') + '版';
-      } else {
-        map[h.name] = { name: h.name, set: h.foil ? 'Foil' : '', note: '你的持仓' };
-      }
-    });
-    return Object.keys(map).sort(function (a, b) { return a.localeCompare(b); }).map(function (k) { return map[k]; });
+  function versionsForCard(c) {
+    var vs = (c.versions || []).slice();
+    if (!vs.length) return [{ mtgoId: c.primaryMtgoId, set: '', foil: false }];
+    return vs.map(function (v) { return { mtgoId: v.mtgoId, set: v.set, foil: !!v.foil }; });
   }
 
-  function renderQuickfillTable() {
-    var body = document.getElementById('quickfill-body');
+  function buildFallRiseRows(items) {
+    var rows = [];
+    items.forEach(function (c) {
+      var vs = versionsForCard(c);
+      vs.forEach(function (v, i) {
+        rows.push({ name: c.name, mtgoId: v.mtgoId, set: v.set || '', foil: v.foil, first: i === 0, groupSize: vs.length });
+      });
+    });
+    return rows;
+  }
+
+  function buildHoldingsRows() {
+    var all = fallItems.concat(riseItems);
+    var rows = [];
+    holdingItems.forEach(function (h) {
+      var match = all.filter(function (c) { return c.name === h.name; })[0];
+      var vs = match ? versionsForCard(match) : [{ mtgoId: null, set: '', foil: h.foil }];
+      vs.forEach(function (v, i) {
+        rows.push({ name: h.name, mtgoId: v.mtgoId, set: v.set || '', foil: v.foil, first: i === 0, groupSize: vs.length });
+      });
+    });
+    return rows;
+  }
+
+  function rowKey(r) { return r.name + '|' + (r.mtgoId == null ? '' : r.mtgoId) + '|' + r.set; }
+
+  function renderVersionSection(sectionKey, rows) {
+    var body = document.getElementById('qf-' + sectionKey + '-body');
     if (!body) return;
-    // 重绘前先把用户已经打进去、还没保存的内容记下来，避免每次数据更新把正在填的表格清空
+    // 重绘前把用户已经打进去、还没保存的内容记下来，避免数据更新把正在填的表格清空
     var existing = {};
     body.querySelectorAll('tr').forEach(function (tr) {
-      existing[tr.getAttribute('data-name')] = {
-        price: tr.querySelector('.qf-price').value,
-        set: tr.querySelector('.qf-set').value,
-        bot: tr.querySelector('.qf-bot').value,
+      var priceEl = tr.querySelector('.qf-price');
+      var nobidEl = tr.querySelector('.qf-nobid');
+      if (!priceEl) return;
+      existing[tr.getAttribute('data-key')] = {
+        price: priceEl.value, bot: tr.querySelector('.qf-bot').value, nobid: nobidEl.checked,
       };
     });
 
-    var rows = buildQuickfillRows();
-    var empty = document.getElementById('quickfill-empty');
-    var wrap = document.getElementById('quickfill-wrap');
-    var saveBtn = document.getElementById('quickfill-save');
+    var empty = document.getElementById('qf-' + sectionKey + '-empty');
+    var wrap = document.getElementById('qf-' + sectionKey + '-wrap');
+    var saveBtn = document.querySelector('.qf-save-btn[data-section="' + sectionKey + '"]');
+    var count = document.getElementById('qf-' + sectionKey + '-count');
+    var cardCount = rows.filter(function (r) { return r.first; }).length;
+    if (count) count.textContent = cardCount ? (cardCount + ' 张卡 / ' + rows.length + ' 个版本') : '';
     if (!rows.length) { empty.hidden = false; wrap.hidden = true; saveBtn.hidden = true; return; }
     empty.hidden = true; wrap.hidden = false; saveBtn.hidden = false;
 
     body.innerHTML = rows.map(function (r) {
-      var prev = existing[r.name];
-      var setVal = prev ? prev.set : r.set;
+      var key = rowKey(r);
+      var prev = existing[key];
       var priceVal = prev ? prev.price : '';
       var botVal = prev ? prev.bot : 'GoatBots';
+      var nobidChecked = prev ? prev.nobid : false;
       var botOptions = QF_BOTS.map(function (b) {
         return '<option' + (b === botVal ? ' selected' : '') + '>' + b + '</option>';
       }).join('');
-      return '<tr data-name="' + escapeHtml(r.name) + '">' +
-        '<td class="card-name">' + escapeHtml(r.name) + (r.note ? '<div class="panel-note" style="margin:2px 0 0;">' + escapeHtml(r.note) + '</div>' : '') + '</td>' +
-        '<td><input type="text" class="qf-set" value="' + escapeHtml(setVal) + '" style="width:80px;background:var(--paper);border:1px solid var(--line);border-radius:5px;padding:4px 6px;font-size:12.5px;color:var(--text);" /></td>' +
+      var setLabel = (r.set || '?') + (r.foil ? ' F' : '');
+      return '<tr data-key="' + escapeHtml(key) + '" data-name="' + escapeHtml(r.name) + '" data-set="' + escapeHtml(r.set || '') + (r.foil ? ' F' : '') + '">' +
+        (r.first ? '<td class="card-name" rowspan="' + r.groupSize + '">' + escapeHtml(r.name) + '</td>' : '') +
+        '<td class="mono">' + escapeHtml(setLabel) + '</td>' +
         '<td><select class="qf-bot" style="background:var(--paper);border:1px solid var(--line);border-radius:5px;padding:4px 6px;font-size:12.5px;color:var(--text);">' + botOptions + '</select></td>' +
-        '<td class="num"><input type="number" min="0" step="0.01" class="qf-price" placeholder="—" value="' + escapeHtml(priceVal) + '" style="width:80px;background:var(--paper);border:1px solid var(--line);border-radius:5px;padding:4px 6px;font-size:12.5px;color:var(--text);text-align:right;" /></td>' +
-        '</tr>';
+        '<td class="num" style="white-space:nowrap;">' +
+        '<input type="number" min="0" step="0.01" class="qf-price" placeholder="—" value="' + escapeHtml(priceVal) + '"' + (nobidChecked ? ' disabled' : '') +
+        ' style="width:72px;background:var(--paper);border:1px solid var(--line);border-radius:5px;padding:4px 6px;font-size:12.5px;color:var(--text);text-align:right;" />' +
+        '<label style="font-size:11px;color:var(--text-dim);margin-left:6px;white-space:nowrap;"><input type="checkbox" class="qf-nobid"' + (nobidChecked ? ' checked' : '') + ' style="vertical-align:middle;" /> 暂不收购</label>' +
+        '</td></tr>';
     }).join('');
+
+    body.querySelectorAll('.qf-nobid').forEach(function (cb) {
+      cb.addEventListener('change', function () {
+        var priceEl = cb.closest('tr').querySelector('.qf-price');
+        priceEl.disabled = cb.checked;
+        if (cb.checked) priceEl.value = '';
+      });
+    });
+  }
+
+  function renderAllQuickfillSections() {
+    renderVersionSection('fall', buildFallRiseRows(fallItems));
+    renderVersionSection('rise', buildFallRiseRows(riseItems));
+    renderVersionSection('hold', buildHoldingsRows());
+  }
+
+  async function saveQuickfillSection(sectionKey) {
+    var msg = document.getElementById('qf-' + sectionKey + '-msg');
+    var btn = document.querySelector('.qf-save-btn[data-section="' + sectionKey + '"]');
+    var rows = document.querySelectorAll('#qf-' + sectionKey + '-body tr');
+    var toSave = [];
+    rows.forEach(function (tr) {
+      var nobid = tr.querySelector('.qf-nobid').checked;
+      var priceStr = tr.querySelector('.qf-price').value;
+      var price = parseFloat(priceStr);
+      if (!nobid && isNaN(price)) return;
+      toSave.push({
+        name: tr.getAttribute('data-name'),
+        set: tr.getAttribute('data-set') || '',
+        bot: tr.querySelector('.qf-bot').value,
+        price: nobid ? null : price,
+        noBid: nobid,
+        date: todayStr(),
+      });
+    });
+    if (!toSave.length) { msg.textContent = '还没填任何内容'; msg.className = 'form-msg err'; return; }
+    btn.disabled = true; msg.textContent = '保存中…'; msg.className = 'form-msg';
+    var ok = 0;
+    for (var i = 0; i < toSave.length; i++) {
+      try { await db.collection('buy_observations').add(toSave[i]); ok++; }
+      catch (e) {}
+    }
+    btn.disabled = false;
+    if (ok === toSave.length) {
+      document.querySelectorAll('#qf-' + sectionKey + '-body .qf-price').forEach(function (el) { el.value = ''; });
+      document.querySelectorAll('#qf-' + sectionKey + '-body .qf-nobid').forEach(function (el) { el.checked = false; el.dispatchEvent(new Event('change')); });
+      msg.textContent = '已保存 ' + ok + ' 条'; msg.className = 'form-msg ok';
+    } else {
+      msg.textContent = '保存了 ' + ok + ' / ' + toSave.length + ' 条，部分失败了，剩下的还留在表格里可以重试';
+      msg.className = 'form-msg err';
+    }
   }
 
   function renderObs(items) {
@@ -693,8 +770,9 @@
     tbl.hidden = false; empty.hidden = true;
     var sorted = items.slice().sort(function (a, b) { return (b.date || '').localeCompare(a.date || ''); });
     body.innerHTML = sorted.map(function (o) {
+      var priceCell = o.noBid ? '<span style="color:var(--text-dim);">暂不收购</span>' : fmtTix(o.price);
       return '<tr><td class="card-name">' + escapeHtml(o.name) + '</td><td class="mono">' + escapeHtml(o.set || '—') + '</td><td>' + escapeHtml(o.bot || '') +
-        '</td><td class="num price">' + fmtTix(o.price) + '</td><td class="mono">' + escapeHtml(o.date || '') + '</td>' +
+        '</td><td class="num price">' + priceCell + '</td><td class="mono">' + escapeHtml(o.date || '') + '</td>' +
         '<td><button class="icon-btn" data-del-obs="' + o.id + '" title="删除">&times;</button></td></tr>';
     }).join('');
   }
@@ -1040,7 +1118,7 @@
       renderList('fall-body', fallItems, 'fall');
       renderList('rise-body', riseItems, 'rise');
       renderHoldings();
-      renderQuickfillTable();
+      renderAllQuickfillSections();
     }, function () { renderList('fall-body', [], 'fall'); renderList('rise-body', [], 'rise'); });
 
     db.collection('portfolio').onSnapshot(function (snap) {
@@ -1051,7 +1129,7 @@
         return v;
       });
       renderHoldings();
-      renderQuickfillTable();
+      renderAllQuickfillSections();
     }, function () { renderHoldings(); });
 
     db.collection('buy_observations').onSnapshot(function (snap) {
@@ -1099,74 +1177,8 @@
       finally { btn.disabled = false; }
     });
 
-    document.getElementById('obs-batch-form').addEventListener('submit', async function (ev) {
-      ev.preventDefault();
-      var msg = document.getElementById('obs-batch-msg');
-      var btn = ev.target.querySelector('button');
-      var raw = document.getElementById('o-batch').value;
-      var lines = raw.split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
-      if (!lines.length) { msg.textContent = '先粘贴几行再提交'; msg.className = 'form-msg err full'; return; }
-      var validBots = ['GoatBots', 'Cardhoarder', '其他'];
-      var parsed = [], errors = [];
-      lines.forEach(function (line, i) {
-        var parts = line.split('|').map(function (p) { return p.trim(); });
-        var name, set, price, bot;
-        if (parts.length === 2) { name = parts[0]; set = ''; price = parseFloat(parts[1]); bot = 'GoatBots'; }
-        else if (parts.length === 3) { name = parts[0]; set = parts[1]; price = parseFloat(parts[2]); bot = 'GoatBots'; }
-        else if (parts.length >= 4) { name = parts[0]; set = parts[1]; price = parseFloat(parts[2]); bot = parts[3] || 'GoatBots'; }
-        else { errors.push('第' + (i + 1) + '行：格式不对，至少要有"卡名 | 收购价"两部分（用竖线 | 分隔）'); return; }
-        if (validBots.indexOf(bot) === -1) bot = '其他';
-        if (!name || isNaN(price)) { errors.push('第' + (i + 1) + '行：卡名或价格无法识别'); return; }
-        parsed.push({ name: name, set: set, bot: bot, price: price, date: todayStr() });
-      });
-      if (!parsed.length) { msg.textContent = errors.join('；'); msg.className = 'form-msg err full'; return; }
-      btn.disabled = true; msg.textContent = '提交中…'; msg.className = 'form-msg full';
-      var okCount = 0;
-      for (var j = 0; j < parsed.length; j++) {
-        try { await db.collection('buy_observations').add(parsed[j]); okCount++; }
-        catch (e) { errors.push(parsed[j].name + '：保存失败'); }
-      }
-      btn.disabled = false;
-      if (okCount === parsed.length) {
-        ev.target.reset();
-        msg.textContent = '已记录 ' + okCount + ' 条'; msg.className = 'form-msg ok full';
-      } else {
-        msg.textContent = '成功 ' + okCount + ' 条，' + errors.length + ' 条有问题：' + errors.join('；');
-        msg.className = 'form-msg err full';
-      }
-    });
-
-    document.getElementById('quickfill-save').addEventListener('click', async function () {
-      var btn = this;
-      var msg = document.getElementById('quickfill-msg');
-      var rows = document.querySelectorAll('#quickfill-body tr');
-      var toSave = [];
-      rows.forEach(function (tr) {
-        var price = parseFloat(tr.querySelector('.qf-price').value);
-        if (isNaN(price)) return;
-        toSave.push({
-          name: tr.getAttribute('data-name'),
-          set: tr.querySelector('.qf-set').value.trim(),
-          bot: tr.querySelector('.qf-bot').value,
-          price: price,
-          date: todayStr(),
-        });
-      });
-      if (!toSave.length) { msg.textContent = '还没填任何收购价'; msg.className = 'form-msg err'; return; }
-      btn.disabled = true; msg.textContent = '保存中…'; msg.className = 'form-msg';
-      var ok = 0;
-      for (var i = 0; i < toSave.length; i++) {
-        try { await db.collection('buy_observations').add(toSave[i]); ok++; }
-        catch (e) {}
-      }
-      btn.disabled = false;
-      if (ok === toSave.length) {
-        document.querySelectorAll('#quickfill-body .qf-price').forEach(function (el) { el.value = ''; });
-        msg.textContent = '已保存 ' + ok + ' 条'; msg.className = 'form-msg ok';
-      } else {
-        msg.textContent = '保存了 ' + ok + ' / ' + toSave.length + ' 条，部分失败了，剩下没保存成功的价格还留在表格里可以重试';
-        msg.className = 'form-msg err';
-      }
+    document.querySelectorAll('.qf-save-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () { saveQuickfillSection(btn.getAttribute('data-section')); });
     });
 
     document.getElementById('holdings-body').addEventListener('click', async function (ev) {
