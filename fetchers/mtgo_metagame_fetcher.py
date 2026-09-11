@@ -74,6 +74,42 @@ def fetch_recent_events(only_formats=("modern", "legacy", "standard", "pauper"))
     return events
 
 
+def fetch_events_for_month(year: int, month: int, only_formats=("modern", "legacy", "standard", "pauper")) -> list[dict]:
+    """跟 `fetch_recent_events`同一套解析逻辑，但指向官方页面自带的按年月归档浏览
+    功能——decklists 页面本身就有一个"年份/月份下拉菜单 + Go 按钮"（见页面 HTML 里
+    `id="decklistYear"`/`id="decklistMonth"` 两个 <select>），生成的 URL 就是
+    `?month=MM&year=YYYY`，这是官方设计好的公开导航方式，不是猜测/遍历不透明 ID。
+    用来一次性回填几个月前的历史赛事使用率（往前补数据），不是常规每日流程的一部分。
+    """
+    url = f"{_INDEX_URL}?month={month:02d}&year={year}"
+    resp = requests.get(url, headers=_HEADERS, timeout=60)
+    resp.raise_for_status()
+    hrefs = re.findall(r'href="(/decklist/[^"]+)"', resp.text)
+
+    events = []
+    seen = set()
+    for href in hrefs:
+        if href in seen:
+            continue
+        seen.add(href)
+        slug = href.split("/decklist/")[-1]
+        fmt = _slug_format(slug)
+        if fmt is None or fmt not in only_formats:
+            continue
+        if "-challenge-" in slug:
+            event_type = "challenge"
+        elif "-league-" in slug:
+            event_type = "league"
+        else:
+            event_type = "other"
+        date_m = re.search(r"(\d{4}-\d{2}-\d{2})", slug)
+        events.append({
+            "format": fmt, "event_type": event_type, "slug": slug,
+            "url": _BASE_URL + href, "date": date_m.group(1) if date_m else None,
+        })
+    return events
+
+
 def fetch_event_decklists(url: str) -> dict:
     """抓取单场赛事页面，返回 {name, publish_date_or_starttime, format, decks: [{player, cards: {name: qty}}]}。
 

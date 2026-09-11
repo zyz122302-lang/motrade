@@ -317,22 +317,38 @@
         ② 浏览器打开 goatbots.com 搜卡名，页面上买卖价都会显示（更方便，人眼查看不受限制，程序不抓取）。
         卡多的话可以先把看到的几张一起记在备忘里，再用下面"批量粘贴录入"一次性提交，不用一张一张填表单。
       </p>
-      <div id="obs-empty" class="empty-state" hidden>还没有记录。</div>
-      <div class="table-wrap">
-        <table id="obs-table" hidden>
-          <thead><tr><th>卡牌</th><th>版本</th><th>Bot</th><th class="num">收购价</th><th>日期</th><th></th></tr></thead>
-          <tbody id="obs-body"></tbody>
-        </table>
+
+      <div style="margin-bottom:22px;">
+        <h3 style="font-size:15px;margin-bottom:6px;">一键从观察池 + 持仓填写</h3>
+        <p class="panel-note" style="margin-bottom:10px;">
+          卡名和版本自动从"下跌观察 / 上涨观察 / 持仓"里带出来，默认是最低价版本；如果这张卡也在你的
+          持仓里，会提示你持有的是普通版还是 Foil（具体是哪个系列持仓这里存的不够细，版本框可以自己改）。
+          你只需要去查一眼买价填进去，不用自己打卡名。没填价格的行提交时会自动跳过。
+        </p>
+        <div id="quickfill-empty" class="empty-state" hidden>下跌观察 / 上涨观察 / 持仓里现在还没有卡，有数据后这里会自动出现。</div>
+        <div class="table-wrap" id="quickfill-wrap" hidden>
+          <table>
+            <thead><tr><th>卡牌</th><th>版本</th><th>Bot</th><th class="num">收购价</th></tr></thead>
+            <tbody id="quickfill-body"></tbody>
+          </table>
+        </div>
+        <button id="quickfill-save" hidden style="margin-top:10px;background:var(--gold);color:#1c1305;border:none;border-radius:6px;padding:8px 16px;font-size:13.5px;font-weight:600;cursor:pointer;">保存全部已填写的</button>
+        <div class="form-msg" id="quickfill-msg"></div>
       </div>
-      <form class="entry" id="obs-form">
-        <div class="full"><label for="o-name">卡牌名称</label><input id="o-name" type="text" required /></div>
-        <div><label for="o-set">版本 / Set（如 PRM、MH3 F，可空）</label><input id="o-set" type="text" placeholder="例如 PRM 或 MH3 F" /></div>
-        <div><label for="o-bot">Bot</label><select id="o-bot"><option>GoatBots</option><option>Cardhoarder</option><option>其他</option></select></div>
-        <div><label for="o-price">收购价 (TIX)</label><input id="o-price" type="number" min="0" step="0.01" required /></div>
-        <button type="submit">记录买价</button>
-        <div class="form-msg full" id="obs-msg"></div>
-      </form>
-      <details style="margin-top:16px;">
+
+      <details style="margin-bottom:10px;">
+        <summary style="cursor:pointer;font-size:12.5px;color:var(--text-dim);">这张卡不在上面的表格里？手动录入</summary>
+        <form class="entry" id="obs-form" style="margin-top:10px;">
+          <div class="full"><label for="o-name">卡牌名称</label><input id="o-name" type="text" required /></div>
+          <div><label for="o-set">版本 / Set（如 PRM、MH3 F，可空）</label><input id="o-set" type="text" placeholder="例如 PRM 或 MH3 F" /></div>
+          <div><label for="o-bot">Bot</label><select id="o-bot"><option>GoatBots</option><option>Cardhoarder</option><option>其他</option></select></div>
+          <div><label for="o-price">收购价 (TIX)</label><input id="o-price" type="number" min="0" step="0.01" required /></div>
+          <button type="submit">记录买价</button>
+          <div class="form-msg full" id="obs-msg"></div>
+        </form>
+      </details>
+
+      <details style="margin-bottom:20px;">
         <summary style="cursor:pointer;font-size:12.5px;color:var(--text-dim);">一次看多张卡？批量粘贴录入</summary>
         <form class="entry" id="obs-batch-form" style="margin-top:10px;">
           <div class="full">
@@ -344,6 +360,15 @@
           <div class="form-msg full" id="obs-batch-msg"></div>
         </form>
       </details>
+
+      <h3 style="font-size:15px;margin-bottom:8px;">已记录的买价</h3>
+      <div id="obs-empty" class="empty-state" hidden>还没有记录。</div>
+      <div class="table-wrap">
+        <table id="obs-table" hidden>
+          <thead><tr><th>卡牌</th><th>版本</th><th>Bot</th><th class="num">收购价</th><th>日期</th><th></th></tr></thead>
+          <tbody id="obs-body"></tbody>
+        </table>
+      </div>
     </section>
   </section>
 
@@ -370,7 +395,7 @@
         <p class="panel-note" id="research-coverage" style="margin-bottom:18px;"></p>
         <h3 style="font-size:15px;margin-bottom:8px;">特征重要性（模型认为哪些指标最能预测反弹）</h3>
         <div id="research-importance" style="margin-bottom:22px;"></div>
-        <h3 style="font-size:15px;margin-bottom:8px;">本周模型评分最高的候选（预测反弹概率降序）</h3>
+        <h3 style="font-size:15px;margin-bottom:8px;">预测反弹概率 &gt; 50% 的候选（按概率降序，点卡名可查看详情）</h3>
         <div class="table-wrap">
           <table id="research-table">
             <thead><tr><th>卡牌</th><th class="num">现价</th><th class="num">7日</th><th class="num">30日</th><th class="num">预测反弹概率</th></tr></thead>
@@ -537,6 +562,7 @@
   };
   var currentResearchRun = null;
   var currentResearchWindow = '14';
+  var researchCandidatesByMtgoId = {};
 
   function renderResearch(run) {
     currentResearchRun = run;
@@ -586,19 +612,76 @@
         '<div class="imp-value">' + f.importance + '</div></div>';
     }).join('') || '<p class="panel-note">无数据</p>';
 
-    var cands = w.topCandidates || [];
+    researchCandidatesByMtgoId = {};
+    var cands = (w.topCandidates || []).filter(function (r) { return r.predictedReboundProb > 0.5; });
+    cands.forEach(function (r) { researchCandidatesByMtgoId[r.mtgoId] = r; });
     document.getElementById('research-table-body').innerHTML = cands.map(function (r) {
-      return '<tr><td class="card-name">' + escapeHtml(r.name) + '</td>' +
+      return '<tr class="card-row" data-mtgo-id="' + r.mtgoId + '"><td class="card-name">' + escapeHtml(r.name) + '</td>' +
         '<td class="num price">' + fmtTix(r.price) + '</td>' +
         '<td class="num">' + chgHtml(r.chg7d) + '</td>' +
         '<td class="num">' + chgHtml(r.chg30d) + '</td>' +
         '<td class="num price">' + fmtPct(r.predictedReboundProb) + '</td></tr>';
-    }).join('') || '<tr><td colspan="5" class="panel-note">无数据</td></tr>';
+    }).join('') || '<tr><td colspan="5" class="panel-note">这个窗口本周没有预测反弹概率超过50%的候选——模型打分整体偏保守是正常现象，不代表没有值得关注的卡，可以换个窗口看看，或者参考"下跌观察/上涨观察"里 Claude 的研判。</td></tr>';
   }
 
   function fmtPct(x) {
     if (x === null || x === undefined || isNaN(x)) return '—';
     return (x * 100).toFixed(1) + '%';
+  }
+
+  var QF_BOTS = ['GoatBots', 'Cardhoarder', '其他'];
+
+  function buildQuickfillRows() {
+    var map = {};
+    fallItems.concat(riseItems).forEach(function (c) {
+      var v = (c.versions || []).filter(function (x) { return String(x.mtgoId) === String(c.primaryMtgoId); })[0];
+      map[c.name] = { name: c.name, set: v ? ((v.set || '') + (v.foil ? ' F' : '')) : '', note: '' };
+    });
+    holdingItems.forEach(function (h) {
+      if (map[h.name]) {
+        map[h.name].note = '你持有' + (h.foil ? 'Foil' : '普通') + '版';
+      } else {
+        map[h.name] = { name: h.name, set: h.foil ? 'Foil' : '', note: '你的持仓' };
+      }
+    });
+    return Object.keys(map).sort(function (a, b) { return a.localeCompare(b); }).map(function (k) { return map[k]; });
+  }
+
+  function renderQuickfillTable() {
+    var body = document.getElementById('quickfill-body');
+    if (!body) return;
+    // 重绘前先把用户已经打进去、还没保存的内容记下来，避免每次数据更新把正在填的表格清空
+    var existing = {};
+    body.querySelectorAll('tr').forEach(function (tr) {
+      existing[tr.getAttribute('data-name')] = {
+        price: tr.querySelector('.qf-price').value,
+        set: tr.querySelector('.qf-set').value,
+        bot: tr.querySelector('.qf-bot').value,
+      };
+    });
+
+    var rows = buildQuickfillRows();
+    var empty = document.getElementById('quickfill-empty');
+    var wrap = document.getElementById('quickfill-wrap');
+    var saveBtn = document.getElementById('quickfill-save');
+    if (!rows.length) { empty.hidden = false; wrap.hidden = true; saveBtn.hidden = true; return; }
+    empty.hidden = true; wrap.hidden = false; saveBtn.hidden = false;
+
+    body.innerHTML = rows.map(function (r) {
+      var prev = existing[r.name];
+      var setVal = prev ? prev.set : r.set;
+      var priceVal = prev ? prev.price : '';
+      var botVal = prev ? prev.bot : 'GoatBots';
+      var botOptions = QF_BOTS.map(function (b) {
+        return '<option' + (b === botVal ? ' selected' : '') + '>' + b + '</option>';
+      }).join('');
+      return '<tr data-name="' + escapeHtml(r.name) + '">' +
+        '<td class="card-name">' + escapeHtml(r.name) + (r.note ? '<div class="panel-note" style="margin:2px 0 0;">' + escapeHtml(r.note) + '</div>' : '') + '</td>' +
+        '<td><input type="text" class="qf-set" value="' + escapeHtml(setVal) + '" style="width:80px;background:var(--paper);border:1px solid var(--line);border-radius:5px;padding:4px 6px;font-size:12.5px;color:var(--text);" /></td>' +
+        '<td><select class="qf-bot" style="background:var(--paper);border:1px solid var(--line);border-radius:5px;padding:4px 6px;font-size:12.5px;color:var(--text);">' + botOptions + '</select></td>' +
+        '<td class="num"><input type="number" min="0" step="0.01" class="qf-price" placeholder="—" value="' + escapeHtml(priceVal) + '" style="width:80px;background:var(--paper);border:1px solid var(--line);border-radius:5px;padding:4px 6px;font-size:12.5px;color:var(--text);text-align:right;" /></td>' +
+        '</tr>';
+    }).join('');
   }
 
   function renderObs(items) {
@@ -684,13 +767,43 @@
   }
 
   function openDetail(id, fromView) {
+    var all = fallItems.concat(riseItems);
+    var c = all.filter(function (i) { return i.id === id; })[0];
+    if (!c) {
+      currentDetailReturnView = fromView;
+      switchView('detail');
+      document.getElementById('detail-body').innerHTML = '<p class="panel-note">没找到这张卡。</p>';
+      return;
+    }
+    renderDetailCard(c, fromView);
+  }
+
+  function openResearchDetail(candidate) {
+    var all = fallItems.concat(riseItems);
+    var matched = all.filter(function (i) { return String(i.primaryMtgoId) === String(candidate.mtgoId); })[0];
+    if (matched) { renderDetailCard(matched, 'research'); return; }
+    renderDetailCard({
+      id: null,
+      name: candidate.name,
+      rarity: '',
+      formats: [],
+      primaryMtgoId: candidate.mtgoId,
+      bestPrice: candidate.price,
+      bestSource: 'goatbots',
+      chg7d: candidate.chg7d,
+      chg30d: candidate.chg30d,
+      low90: null, ma7: null, ma30: null,
+      verdict: null,
+      note: '该卡来自每周数据研究的候选打分，不在每日观察池的选卡范围内，暂时没有独立的研判笔记和多版本明细。',
+      versions: [],
+    }, 'research');
+  }
+
+  function renderDetailCard(c, fromView) {
     currentDetailReturnView = fromView;
     switchView('detail');
     var body = document.getElementById('detail-body');
     body.innerHTML = '<p class="panel-note">加载中…</p>';
-    var all = fallItems.concat(riseItems);
-    var c = all.filter(function (i) { return i.id === id; })[0];
-    if (!c) { body.innerHTML = '<p class="panel-note">没找到这张卡。</p>'; return; }
 
     var versions = c.versions || [];
     var primaryId = c.primaryMtgoId;
@@ -731,14 +844,126 @@
       '<span><span class="sw" style="background:var(--text-dim);border-top:1px dashed var(--text-dim);height:0;"></span>MA30</span>' +
       '</div><div id="chart-container">加载价格曲线…</div></div>';
 
+    html += '<div class="chart-wrap"><div class="chart-legend" id="usage-chart-legend"></div>' +
+      '<div id="usage-chart-container">加载使用率曲线…</div></div>';
+
     body.innerHTML = html;
 
     document.querySelectorAll('.version-btn').forEach(function (btn) {
       btn.addEventListener('click', function () { selectVersion(versions, btn.getAttribute('data-mtgo-id')); });
     });
 
-    selectVersion(versions, primaryId);
+    if (versions.length) {
+      selectVersion(versions, primaryId);
+    } else {
+      document.getElementById('stat-goatbots').textContent = fmtTix(c.bestSource === 'goatbots' ? c.bestPrice : null);
+      document.getElementById('stat-cardhoarder').textContent = fmtTix(c.bestSource === 'cardhoarder' ? c.bestPrice : null);
+      document.getElementById('stat-chg7').innerHTML = chgHtml(c.chg7d);
+      document.getElementById('stat-chg30').innerHTML = chgHtml(c.chg30d);
+      document.getElementById('stat-low90').textContent = fmtTix(c.low90);
+      document.getElementById('stat-ma7').textContent = fmtTix(c.ma7);
+      document.getElementById('stat-ma30').textContent = fmtTix(c.ma30);
+      loadChartFor(c.primaryMtgoId);
+    }
     if (!c.imageUrl) loadCardArt(primaryId);
+    loadUsageTrend(c.name);
+  }
+
+  var metagameUsageDocsPromise = null;
+  var USAGE_CHART_DAYS = 60;
+  var USAGE_FORMAT_COLOR = { modern: 'var(--gold)', legacy: 'var(--profit)', standard: 'var(--rare)', pauper: 'var(--loss)' };
+
+  function loadMetagameUsageDocsOnce() {
+    if (!db) return Promise.resolve([]);
+    if (!metagameUsageDocsPromise) {
+      metagameUsageDocsPromise = db.collection('metagame_usage').get()
+        .then(function (snap) { return snap.docs.map(function (d) { return d.data(); }); })
+        .catch(function () { return []; });
+    }
+    return metagameUsageDocsPromise;
+  }
+
+  function buildUsageChart(seriesByFormat) {
+    var formats = Object.keys(seriesByFormat).filter(function (f) { return seriesByFormat[f].length; });
+    if (!formats.length) return { html: '<div class="chart-empty">最近' + USAGE_CHART_DAYS + '天内没有这张卡的赛事使用率数据</div>', legend: '' };
+
+    var allPoints = [];
+    formats.forEach(function (f) { seriesByFormat[f].forEach(function (p) { allPoints.push(p); }); });
+    var dates = allPoints.map(function (p) { return new Date(p[0]).getTime(); });
+    var minD = Math.min.apply(null, dates), maxD = Math.max.apply(null, dates);
+    if (minD === maxD) { minD -= 86400000; maxD += 86400000; }
+    var rates = allPoints.map(function (p) { return p[1]; });
+    var maxR = Math.max.apply(null, rates.concat([0.01])) * 1.15;
+
+    var W = 640, H = 160, padL = 40, padR = 10, padT = 10, padB = 18;
+    function x(t) { return padL + ((t - minD) / (maxD - minD)) * (W - padL - padR); }
+    function y(v) { return padT + (1 - v / maxR) * (H - padT - padB); }
+
+    var grid = '';
+    for (var i = 0; i <= 4; i++) {
+      var gy = padT + (i / 4) * (H - padT - padB);
+      var val = maxR * (1 - i / 4);
+      grid += '<line x1="' + padL + '" x2="' + (W - padR) + '" y1="' + gy + '" y2="' + gy + '" stroke="currentColor" stroke-opacity="0.08" />' +
+        '<text x="2" y="' + (gy + 3) + '" font-size="9" fill="currentColor" fill-opacity="0.5">' + (val * 100).toFixed(0) + '%</text>';
+    }
+
+    var paths = formats.map(function (f) {
+      var pts = seriesByFormat[f].slice().sort(function (a, b) { return a[0].localeCompare(b[0]); });
+      var d = pts.map(function (p, i) {
+        return (i === 0 ? 'M' : 'L') + x(new Date(p[0]).getTime()).toFixed(1) + ',' + y(p[1]).toFixed(1);
+      }).join(' ');
+      var dots = pts.map(function (p) {
+        return '<circle cx="' + x(new Date(p[0]).getTime()).toFixed(1) + '" cy="' + y(p[1]).toFixed(1) + '" r="2.2" fill="' + (USAGE_FORMAT_COLOR[f] || 'var(--gold)') + '" />';
+      }).join('');
+      return '<path d="' + d + '" fill="none" stroke="' + (USAGE_FORMAT_COLOR[f] || 'var(--gold)') + '" stroke-width="1.6" />' + dots;
+    }).join('');
+
+    var legend = formats.map(function (f) {
+      return '<span><span class="sw" style="background:' + (USAGE_FORMAT_COLOR[f] || 'var(--gold)') + ';"></span>' + (FORMAT_LABEL[f] || f) + '使用率</span>';
+    }).join('');
+
+    var html = '<svg class="price-chart" viewBox="0 0 ' + W + ' ' + H + '" style="color:var(--text)">' + grid + paths + '</svg>';
+    return { html: html, legend: legend };
+  }
+
+  function loadUsageTrend(name) {
+    var container = document.getElementById('usage-chart-container');
+    var legendEl = document.getElementById('usage-chart-legend');
+    if (!container) return;
+    loadMetagameUsageDocsOnce().then(function (docs) {
+      var c2 = document.getElementById('usage-chart-container');
+      var legendEl2 = document.getElementById('usage-chart-legend');
+      if (!c2) return;
+      var cutoff = Date.now() - USAGE_CHART_DAYS * 86400000;
+      var seriesByFormat = {};
+      docs.forEach(function (doc) {
+        if (!doc || !doc.usage || !(name in doc.usage) || !doc.sample_size) return;
+        var t = new Date(doc.week_of).getTime();
+        if (isNaN(t) || t < cutoff) return;
+        var fmt = doc.format;
+        if (!fmt) return;
+        seriesByFormat[fmt] = seriesByFormat[fmt] || [];
+        seriesByFormat[fmt].push([doc.week_of, doc.usage[name] / doc.sample_size]);
+      });
+      // 同一天同一赛制可能有多个 source（官方/MTGTop8/回填），合并成一条：按 week_of 汇总取平均
+      Object.keys(seriesByFormat).forEach(function (fmt) {
+        var byWeek = {};
+        seriesByFormat[fmt].forEach(function (p) {
+          byWeek[p[0]] = byWeek[p[0]] || [];
+          byWeek[p[0]].push(p[1]);
+        });
+        seriesByFormat[fmt] = Object.keys(byWeek).map(function (wk) {
+          var vals = byWeek[wk];
+          return [wk, vals.reduce(function (a, b) { return a + b; }, 0) / vals.length];
+        });
+      });
+      var result = buildUsageChart(seriesByFormat);
+      c2.innerHTML = result.html;
+      if (legendEl2) legendEl2.innerHTML = result.legend;
+    }).catch(function () {
+      var c2 = document.getElementById('usage-chart-container');
+      if (c2) c2.innerHTML = '<div class="chart-empty">加载使用率数据失败</div>';
+    });
   }
 
   function loadCardArt(mtgoId) {
@@ -779,6 +1004,12 @@
     document.querySelectorAll('#research-window-filter .fmt-btn').forEach(function (btn) {
       btn.addEventListener('click', function () { renderResearchWindow(btn.getAttribute('data-window')); });
     });
+    document.getElementById('research-table-body').addEventListener('click', function (ev) {
+      var tr = ev.target.closest('tr.card-row');
+      if (!tr) return;
+      var candidate = researchCandidatesByMtgoId[tr.getAttribute('data-mtgo-id')];
+      if (candidate) openResearchDetail(candidate);
+    });
 
     if (!window.claude || !window.claude.use) { renderList('fall-body', [], 'fall'); renderList('rise-body', [], 'rise'); return; }
     db = await window.claude.use('db');
@@ -809,6 +1040,7 @@
       renderList('fall-body', fallItems, 'fall');
       renderList('rise-body', riseItems, 'rise');
       renderHoldings();
+      renderQuickfillTable();
     }, function () { renderList('fall-body', [], 'fall'); renderList('rise-body', [], 'rise'); });
 
     db.collection('portfolio').onSnapshot(function (snap) {
@@ -819,6 +1051,7 @@
         return v;
       });
       renderHoldings();
+      renderQuickfillTable();
     }, function () { renderHoldings(); });
 
     db.collection('buy_observations').onSnapshot(function (snap) {
@@ -900,6 +1133,39 @@
       } else {
         msg.textContent = '成功 ' + okCount + ' 条，' + errors.length + ' 条有问题：' + errors.join('；');
         msg.className = 'form-msg err full';
+      }
+    });
+
+    document.getElementById('quickfill-save').addEventListener('click', async function () {
+      var btn = this;
+      var msg = document.getElementById('quickfill-msg');
+      var rows = document.querySelectorAll('#quickfill-body tr');
+      var toSave = [];
+      rows.forEach(function (tr) {
+        var price = parseFloat(tr.querySelector('.qf-price').value);
+        if (isNaN(price)) return;
+        toSave.push({
+          name: tr.getAttribute('data-name'),
+          set: tr.querySelector('.qf-set').value.trim(),
+          bot: tr.querySelector('.qf-bot').value,
+          price: price,
+          date: todayStr(),
+        });
+      });
+      if (!toSave.length) { msg.textContent = '还没填任何收购价'; msg.className = 'form-msg err'; return; }
+      btn.disabled = true; msg.textContent = '保存中…'; msg.className = 'form-msg';
+      var ok = 0;
+      for (var i = 0; i < toSave.length; i++) {
+        try { await db.collection('buy_observations').add(toSave[i]); ok++; }
+        catch (e) {}
+      }
+      btn.disabled = false;
+      if (ok === toSave.length) {
+        document.querySelectorAll('#quickfill-body .qf-price').forEach(function (el) { el.value = ''; });
+        msg.textContent = '已保存 ' + ok + ' 条'; msg.className = 'form-msg ok';
+      } else {
+        msg.textContent = '保存了 ' + ok + ' / ' + toSave.length + ' 条，部分失败了，剩下没保存成功的价格还留在表格里可以重试';
+        msg.className = 'form-msg err';
       }
     });
 
