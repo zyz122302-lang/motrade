@@ -51,7 +51,7 @@ PRICE_HISTORY_MAX_POINTS = 30
 LOOKAHEAD_WINDOWS = [7, 14, 30]   # 同时训练这几个预测窗口（天）
 DISPLAY_MIN_PROB = 0.5            # 仪表盘只展示预测概率超过这个阈值的候选
 DISPLAY_MAX_PER_WINDOW = 10       # 每个窗口最多保留几张（概率降序截断）
-REBOUND_THRESHOLD = 0.08          # "反弹"板块：涨幅 >= 8% 算反弹（正类）
+REBOUND_THRESHOLD = 0.10          # "反弹"板块：涨幅 >= 10% 算反弹（正类）
 DECLINE_THRESHOLD = 0.10          # "持续下跌"板块：跌幅 >= 10% 算继续下跌（正类）——
                                    # 两个板块是镜像的两个独立二分类问题，共用同一份
                                    # 特征矩阵（同一批锚点），只是标签方向和阈值不同，
