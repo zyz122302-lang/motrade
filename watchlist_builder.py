@@ -17,8 +17,8 @@ NORMAL_RARITIES = {"Common", "Uncommon", "Rare", "Mythic", "Special"}
 
 def load_cards_and_legality(conn):
     cards = {
-        row[0]: {"name": row[1], "cardset": row[2], "rarity": row[3], "foil": row[4]}
-        for row in conn.execute("SELECT mtgo_id, name, cardset, rarity, foil FROM cards")
+        row[0]: {"name": row[1], "cardset": row[2], "rarity": row[3], "foil": row[4], "version": row[5]}
+        for row in conn.execute("SELECT mtgo_id, name, cardset, rarity, foil, version FROM cards")
     }
     legality = {
         row[0]: {"modern": bool(row[1]), "legacy": bool(row[2])}
@@ -52,8 +52,13 @@ def build_candidate_names(conn, today_prices: dict) -> set[str]:
 
 
 def versions_by_name(conn, names: set[str]) -> dict[str, list[dict]]:
-    """返回 {name: [{mtgo_id, set, rarity, foil}, ...]}，包含该卡名下所有已知印刷版本
-    （不管价格高低、foil 与否），用于"点进去看所有版本"的详情页。"""
+    """返回 {name: [{mtgo_id, set, rarity, foil, collector_number}, ...]}，包含该卡名下
+    所有已知印刷版本（不管价格高低、foil 与否），用于"点进去看所有版本"的详情页。
+
+    `collector_number` 来自 GoatBots card-definitions 里的 `version` 字段——同一个
+    `cardset` 代码下常常混着好几种实际印刷（普通版/无边框版/复古边框版等，比如
+    Exploration 的 DMR 版就有两种，`cardset` 都是 "DMR"），光看 cardset+foil 区分不
+    开，这个字段（其实是收藏编号）是目前能拿到的、能把它们区分开的信息。"""
     cards, _ = load_cards_and_legality(conn)
     result = {name: [] for name in names}
     for mid, info in cards.items():
@@ -64,5 +69,6 @@ def versions_by_name(conn, names: set[str]) -> dict[str, list[dict]]:
                 "set": info["cardset"],
                 "rarity": info["rarity"],
                 "foil": info["foil"],
+                "collector_number": info.get("version"),
             })
     return result

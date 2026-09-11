@@ -635,8 +635,8 @@
 
   function versionsForCard(c) {
     var vs = (c.versions || []).slice();
-    if (!vs.length) return [{ mtgoId: c.primaryMtgoId, set: '', foil: false }];
-    return vs.map(function (v) { return { mtgoId: v.mtgoId, set: v.set, foil: !!v.foil }; });
+    if (!vs.length) return [{ mtgoId: c.primaryMtgoId, set: '', foil: false, collectorNumber: '' }];
+    return vs.map(function (v) { return { mtgoId: v.mtgoId, set: v.set, foil: !!v.foil, collectorNumber: v.collectorNumber || '' }; });
   }
 
   function buildFallRiseRows(items) {
@@ -644,7 +644,7 @@
     items.forEach(function (c) {
       var vs = versionsForCard(c);
       vs.forEach(function (v, i) {
-        rows.push({ name: c.name, mtgoId: v.mtgoId, set: v.set || '', foil: v.foil, first: i === 0, groupSize: vs.length });
+        rows.push({ name: c.name, mtgoId: v.mtgoId, set: v.set || '', foil: v.foil, collectorNumber: v.collectorNumber, first: i === 0, groupSize: vs.length });
       });
     });
     return rows;
@@ -655,15 +655,19 @@
     var rows = [];
     holdingItems.forEach(function (h) {
       var match = all.filter(function (c) { return c.name === h.name; })[0];
-      var vs = match ? versionsForCard(match) : [{ mtgoId: null, set: '', foil: h.foil }];
+      var vs = match ? versionsForCard(match) : [{ mtgoId: null, set: '', foil: h.foil, collectorNumber: '' }];
       vs.forEach(function (v, i) {
-        rows.push({ name: h.name, mtgoId: v.mtgoId, set: v.set || '', foil: v.foil, first: i === 0, groupSize: vs.length });
+        rows.push({ name: h.name, mtgoId: v.mtgoId, set: v.set || '', foil: v.foil, collectorNumber: v.collectorNumber, first: i === 0, groupSize: vs.length });
       });
     });
     return rows;
   }
 
-  function rowKey(r) { return r.name + '|' + (r.mtgoId == null ? '' : r.mtgoId) + '|' + r.set; }
+  function rowKey(r) { return r.name + '|' + (r.mtgoId == null ? '' : r.mtgoId) + '|' + r.set + '|' + (r.collectorNumber || ''); }
+
+  function versionLabel(r) {
+    return (r.set || '?') + (r.collectorNumber ? ' #' + r.collectorNumber : '') + (r.foil ? ' F' : '');
+  }
 
   function renderVersionSection(sectionKey, rows) {
     var body = document.getElementById('qf-' + sectionKey + '-body');
@@ -697,8 +701,8 @@
       var botOptions = QF_BOTS.map(function (b) {
         return '<option' + (b === botVal ? ' selected' : '') + '>' + b + '</option>';
       }).join('');
-      var setLabel = (r.set || '?') + (r.foil ? ' F' : '');
-      return '<tr data-key="' + escapeHtml(key) + '" data-name="' + escapeHtml(r.name) + '" data-set="' + escapeHtml(r.set || '') + (r.foil ? ' F' : '') + '">' +
+      var setLabel = versionLabel(r);
+      return '<tr data-key="' + escapeHtml(key) + '" data-name="' + escapeHtml(r.name) + '" data-set="' + escapeHtml(setLabel) + '">' +
         (r.first ? '<td class="card-name" rowspan="' + r.groupSize + '">' + escapeHtml(r.name) + '</td>' : '') +
         '<td class="mono">' + escapeHtml(setLabel) + '</td>' +
         '<td><select class="qf-bot" style="background:var(--paper);border:1px solid var(--line);border-radius:5px;padding:4px 6px;font-size:12.5px;color:var(--text);">' + botOptions + '</select></td>' +
@@ -899,7 +903,7 @@
           ? (v.cardhoarderPrice !== null && v.cardhoarderPrice !== undefined ? Math.min(v.goatbotsPrice, v.cardhoarderPrice) : v.goatbotsPrice)
           : v.cardhoarderPrice;
         return '<button class="version-btn' + (String(v.mtgoId) === String(primaryId) ? ' active' : '') + '" data-mtgo-id="' + v.mtgoId + '">' +
-          escapeHtml(v.set || '?') + (v.foil ? ' F' : '') + ' &middot; ' + fmtTix(vp) + '</button>';
+          escapeHtml(versionLabel(v)) + ' &middot; ' + fmtTix(vp) + '</button>';
       }).join('') + '</div>';
     }
 

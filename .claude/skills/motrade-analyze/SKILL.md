@@ -205,14 +205,17 @@ Cube/Commander 向的，情报面判断时要说明"未见近期 Modern/Legacy/S
   note: "一两句话的研判，中文，供仪表盘详情页展示",
   imageUrl, imageAssetId,   // 卡图，见下面"卡图"小节；抓不到图就都不要写这两个字段
   versions: [   // 该卡的全部已知版本，仪表盘详情页用这个渲染版本切换器
-    { mtgoId, set, foil, goatbotsPrice, cardhoarderPrice, chg7d, chg30d, low90, ma7, ma30 },
+    { mtgoId, set, foil, collectorNumber, goatbotsPrice, cardhoarderPrice, chg7d, chg30d, low90, ma7, ma30 },
     ...
   ]
 }
 ```
 verdict 的取值必须是上面枚举里的英文 key（仪表盘 CSS/文案按这几个 key 渲染），不要自己发明新词。
 `versions` 数组直接从 `data/latest_watchlist.json` 里对应卡片的 `versions` 字段取，字段名要转成
-驼峰（`mtgo_id`→`mtgoId`、`goatbotsPrice`/`cardhoarderPrice`/`chg_7d_pct`→`chg7d` 等）。
+驼峰（`mtgo_id`→`mtgoId`、`goatbotsPrice`/`cardhoarderPrice`/`chg_7d_pct`→`chg7d`、
+`collector_number`→`collectorNumber` 等）。**`collectorNumber` 这个字段必须带上，不要漏**——
+同一个 `set` 代码下经常混着好几种实际印刷（普通版/无边框版/复古边框版等，比如 Exploration 的
+DMR 版就有两种，`set` 都是 "DMR"），光看 set+foil 分不出来，仪表盘就是靠这个字段区分的。
 
 **卡图（每张入选卡都要配）**：写入前先 `read_db`（`db_op: "get"`）看这张卡在 `watchlist`
 集合里已有的文档：

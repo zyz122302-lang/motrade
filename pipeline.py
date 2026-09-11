@@ -137,6 +137,7 @@ def run():
                     "set": vinfo["set"],
                     "foil": vinfo["foil"],
                     "rarity": vinfo["rarity"],
+                    "collector_number": vinfo.get("collector_number"),
                     "goatbotsPrice": gb_price,
                     "cardhoarderPrice": ch_price,
                     "chg_7d_pct": ind.get("chg_7d_pct"),
