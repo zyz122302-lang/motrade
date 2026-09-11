@@ -198,6 +198,14 @@
   .chart-legend .sw { display: inline-block; width: 10px; height: 2px; margin-right: 5px; vertical-align: middle; }
   svg.price-chart { width: 100%; height: auto; display: block; }
   .chart-empty { color: var(--text-dim); font-size: 12.5px; padding: 30px 0; text-align: center; }
+  .chart-target { position: relative; }
+  .chart-hover-overlay { cursor: crosshair; }
+  .chart-tooltip {
+    position: absolute; pointer-events: none; z-index: 5; white-space: nowrap;
+    background: var(--paper-raise); border: 1px solid var(--line); border-radius: 6px;
+    padding: 6px 9px; font-size: 11px; line-height: 1.65; font-family: 'IBM Plex Mono', ui-monospace, monospace;
+    color: var(--text); box-shadow: 0 3px 10px rgba(0,0,0,.18);
+  }
 
   .home-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
   @media (max-width: 760px) { .home-grid { grid-template-columns: 1fr; } }
@@ -282,7 +290,7 @@
             <div class="tile"><div class="label">90日低点</div><div class="value mono" id="tc-low90"></div></div>
             <div class="tile"><div class="label">90日高点</div><div class="value mono" id="tc-high90"></div></div>
           </div>
-          <div class="chart-wrap"><div id="tc-chart-container">加载价格曲线…</div></div>
+          <div class="chart-wrap"><div id="tc-chart-container" class="chart-target">加载价格曲线…</div></div>
 
           <div class="tc-mini-forms">
             <form class="entry" id="tc-hold-form" style="margin-top:0;">
@@ -749,7 +757,7 @@
       var c2 = document.getElementById(containerId);
       if (!c2) return;
       if (!snap.exists) { c2.innerHTML = '<div class="chart-empty">还没有历史曲线数据</div>'; return; }
-      c2.innerHTML = buildChart((snap.data() || {}).series || []);
+      renderPriceChart(c2, (snap.data() || {}).series || []);
     }).catch(function () {
       var c2 = document.getElementById(containerId);
       if (c2) c2.innerHTML = '<div class="chart-empty">加载曲线失败</div>';
@@ -785,7 +793,7 @@
       '<span><span class="sw" style="background:var(--gold);"></span>卖价（GoatBots历史）</span>' +
       '<span><span class="sw" style="background:var(--profit);"></span>MA7</span>' +
       '<span><span class="sw" style="background:var(--text-dim);border-top:1px dashed var(--text-dim);height:0;"></span>MA30</span>' +
-      '</div><div id="tc-detail-chart-container">加载价格曲线…</div></div>';
+      '</div><div id="tc-detail-chart-container" class="chart-target">加载价格曲线…</div></div>';
 
     body.innerHTML = html;
     loadTreasureChestChart('tc-detail-chart-container');
@@ -1024,17 +1032,169 @@
     }).join('');
   }
 
-  function buildChart(series) {
-    if (!series || series.length < 2) return '<div class="chart-empty">历史数据不足，暂时画不出曲线</div>';
-    var W = 640, H = 220, padL = 44, padR = 10, padT = 10, padB = 10;
-    var prices = series.map(function (p) { return p[1]; });
-    var min = Math.min.apply(null, prices), max = Math.max.apply(null, prices);
-    if (min === max) { min -= 1; max += 1; }
-    function x(i) { return padL + (i / (series.length - 1)) * (W - padL - padR); }
-    function y(v) { return padT + (1 - (v - min) / (max - min)) * (H - padT - padB); }
-    function pathFor(vals) {
-      return vals.map(function (v, i) { return (i === 0 ? 'M' : 'L') + x(i).toFixed(1) + ',' + y(v).toFixed(1); }).join(' ');
+  // 通用时间序列图表：横轴按实际日期定位（不是按索引均分），底部画日期刻度，
+  // 鼠标悬停显示十字线+每条线在那一天的数值——下跌/上涨观察详情页的价格曲线、
+  // Treasure Chest 曲线、赛事使用率曲线都复用这一套渲染+交互逻辑。
+  function shortDate(dateStr) {
+    if (!dateStr) return '';
+    var parts = String(dateStr).split('-');
+    return parts.length === 3 ? parts[1] + '-' + parts[2] : dateStr;
+  }
+
+  function mergeTimeline(seriesList) {
+    var set = {};
+    seriesList.forEach(function (s) { (s.points || []).forEach(function (p) { set[p[0]] = true; }); });
+    return Object.keys(set).sort();
+  }
+
+  function renderTimeSeriesChart(container, seriesList, opts) {
+    opts = opts || {};
+    if (!container) return;
+    var W = opts.width || 640, H = opts.height || 220;
+    var padL = opts.padL != null ? opts.padL : 44, padR = opts.padR != null ? opts.padR : 12,
+      padT = opts.padT != null ? opts.padT : 14, padB = opts.padB != null ? opts.padB : 28;
+    var emptyText = opts.emptyText || '历史数据不足，暂时画不出曲线';
+
+    var allVals = [];
+    seriesList.forEach(function (s) {
+      (s.points || []).forEach(function (p) { if (p[1] !== null && p[1] !== undefined && !isNaN(p[1])) allVals.push(p[1]); });
+    });
+    var allDates = mergeTimeline(seriesList);
+    if (!allVals.length || allDates.length < 2) { container.innerHTML = '<div class="chart-empty">' + escapeHtml(emptyText) + '</div>'; return; }
+
+    var minV = Math.min.apply(null, allVals), maxV = Math.max.apply(null, allVals);
+    if (minV === maxV) { minV -= (minV === 0 ? 1 : Math.abs(minV) * 0.1); maxV += (maxV === 0 ? 1 : Math.abs(maxV) * 0.1); }
+    var pad = (maxV - minV) * (opts.yPad != null ? opts.yPad : 0.08);
+    var yMin = minV - pad, yMax = maxV + pad;
+    if (opts.yMinFixed != null) yMin = opts.yMinFixed;
+    if (yMin === yMax) { yMin -= 1; yMax += 1; }
+
+    var minT = new Date(allDates[0]).getTime(), maxT = new Date(allDates[allDates.length - 1]).getTime();
+    if (minT === maxT) { minT -= 86400000; maxT += 86400000; }
+
+    function x(dateStr) { return padL + ((new Date(dateStr).getTime() - minT) / (maxT - minT)) * (W - padL - padR); }
+    function y(v) { return padT + (1 - (v - yMin) / (yMax - yMin)) * (H - padT - padB); }
+
+    var yTickCount = opts.yTickCount || 3;
+    var gridLines = [];
+    for (var g = 0; g <= yTickCount; g++) {
+      var gv = yMin + (yMax - yMin) * g / yTickCount;
+      gridLines.push('<line x1="' + padL + '" x2="' + (W - padR) + '" y1="' + y(gv).toFixed(1) + '" y2="' + y(gv).toFixed(1) + '" stroke="currentColor" stroke-opacity="0.1" />' +
+        '<text x="3" y="' + (y(gv) + 3).toFixed(1) + '" font-size="9" fill="currentColor" fill-opacity="0.55" font-family="IBM Plex Mono, monospace">' + escapeHtml(opts.yFormat ? opts.yFormat(gv) : gv.toFixed(1)) + '</text>');
     }
+
+    var xTickCount = Math.min(opts.xTickCount || 5, allDates.length);
+    var xEls = [];
+    for (var t = 0; t < xTickCount; t++) {
+      var frac = xTickCount === 1 ? 0 : t / (xTickCount - 1);
+      var targetT = minT + frac * (maxT - minT);
+      var nearest = allDates[0], bestDiff = Infinity;
+      for (var di = 0; di < allDates.length; di++) {
+        var diff = Math.abs(new Date(allDates[di]).getTime() - targetT);
+        if (diff < bestDiff) { bestDiff = diff; nearest = allDates[di]; }
+      }
+      var xPos = padL + frac * (W - padL - padR);
+      var anchor = t === 0 ? 'start' : (t === xTickCount - 1 ? 'end' : 'middle');
+      xEls.push('<line x1="' + xPos.toFixed(1) + '" x2="' + xPos.toFixed(1) + '" y1="' + (H - padB).toFixed(1) + '" y2="' + (H - padB + 4).toFixed(1) + '" stroke="currentColor" stroke-opacity="0.3" />' +
+        '<text x="' + xPos.toFixed(1) + '" y="' + (H - 8).toFixed(1) + '" font-size="9" fill="currentColor" fill-opacity="0.6" font-family="IBM Plex Mono, monospace" text-anchor="' + anchor + '">' + escapeHtml(shortDate(nearest)) + '</text>');
+    }
+
+    var pathsAndDots = seriesList.map(function (s) {
+      var pts = (s.points || []).slice().sort(function (a, b) { return String(a[0]).localeCompare(String(b[0])); });
+      var d = '', started = false;
+      pts.forEach(function (p) {
+        if (p[1] === null || p[1] === undefined || isNaN(p[1])) { started = false; return; }
+        d += (started ? 'L' : 'M') + x(p[0]).toFixed(1) + ',' + y(p[1]).toFixed(1) + ' ';
+        started = true;
+      });
+      var dots = s.showDots ? pts.map(function (p) {
+        if (p[1] === null || p[1] === undefined || isNaN(p[1])) return '';
+        return '<circle cx="' + x(p[0]).toFixed(1) + '" cy="' + y(p[1]).toFixed(1) + '" r="2" fill="' + s.color + '" />';
+      }).join('') : '';
+      return '<path d="' + d.trim() + '" fill="none" stroke="' + s.color + '" stroke-width="' + (s.width || 1.6) + '"' + (s.dashed ? ' stroke-dasharray="3,3"' : '') + ' />' + dots;
+    }).join('');
+
+    var hoverMarkers = seriesList.map(function (s, i) {
+      return '<circle class="chart-hover-marker" data-idx="' + i + '" r="3.2" fill="' + s.color + '" stroke="var(--paper-raise)" stroke-width="1.3" style="display:none;" />';
+    }).join('');
+
+    container.innerHTML = '<svg class="price-chart" viewBox="0 0 ' + W + ' ' + H + '" style="color:var(--text);">' +
+      gridLines.join('') + xEls.join('') + pathsAndDots +
+      '<line class="chart-hover-line" x1="0" x2="0" y1="' + padT + '" y2="' + (H - padB) + '" stroke="currentColor" stroke-opacity="0.4" stroke-width="1" style="display:none;" />' +
+      hoverMarkers +
+      '<rect class="chart-hover-overlay" x="' + padL + '" y="' + padT + '" width="' + Math.max(1, W - padL - padR) + '" height="' + Math.max(1, H - padT - padB) + '" fill="transparent" />' +
+      '</svg><div class="chart-tooltip" hidden></div>';
+
+    var svgEl = container.querySelector('svg.price-chart');
+    var overlay = container.querySelector('.chart-hover-overlay');
+    var hoverLine = container.querySelector('.chart-hover-line');
+    var markers = container.querySelectorAll('.chart-hover-marker');
+    var tooltip = container.querySelector('.chart-tooltip');
+    if (!svgEl || !overlay) return;
+
+    var pointMaps = seriesList.map(function (s) {
+      var m = {};
+      (s.points || []).forEach(function (p) { m[p[0]] = p[1]; });
+      return m;
+    });
+
+    function handleMove(clientX, clientY) {
+      var pt = svgEl.createSVGPoint();
+      pt.x = clientX; pt.y = clientY;
+      var ctm = svgEl.getScreenCTM();
+      if (!ctm) return;
+      var loc = pt.matrixTransform(ctm.inverse());
+      var frac = (loc.x - padL) / (W - padL - padR);
+      frac = Math.max(0, Math.min(1, frac));
+      var mouseT = minT + frac * (maxT - minT);
+      var idx = 0, bestDiff = Infinity;
+      for (var i = 0; i < allDates.length; i++) {
+        var diff = Math.abs(new Date(allDates[i]).getTime() - mouseT);
+        if (diff < bestDiff) { bestDiff = diff; idx = i; }
+      }
+      var dateStr = allDates[idx];
+      var xPos = x(dateStr);
+      hoverLine.setAttribute('x1', xPos.toFixed(1));
+      hoverLine.setAttribute('x2', xPos.toFixed(1));
+      hoverLine.style.display = '';
+
+      var lines = ['<span style="color:var(--text-dim);">' + escapeHtml(dateStr) + '</span>'];
+      var anyShown = false;
+      seriesList.forEach(function (s, i) {
+        var v = pointMaps[i][dateStr];
+        var marker = markers[i];
+        if (v === undefined || v === null || isNaN(v)) { if (marker) marker.style.display = 'none'; return; }
+        anyShown = true;
+        if (marker) { marker.setAttribute('cx', xPos.toFixed(1)); marker.setAttribute('cy', y(v).toFixed(1)); marker.style.display = ''; }
+        lines.push('<span style="color:' + s.color + ';">' + escapeHtml(s.label) + '</span> ' + escapeHtml(opts.tooltipFormat ? opts.tooltipFormat(v) : String(v)));
+      });
+      if (!anyShown) { tooltip.hidden = true; return; }
+      tooltip.innerHTML = lines.join('<br>');
+      tooltip.hidden = false;
+      var rect = container.getBoundingClientRect();
+      var left = clientX - rect.left + 12;
+      var top = clientY - rect.top - 10;
+      if (left + 170 > rect.width) left = clientX - rect.left - 170 - 12;
+      tooltip.style.left = Math.max(0, left) + 'px';
+      tooltip.style.top = Math.max(0, top) + 'px';
+    }
+    function hideHover() {
+      hoverLine.style.display = 'none';
+      markers.forEach(function (m) { m.style.display = 'none'; });
+      tooltip.hidden = true;
+    }
+    overlay.addEventListener('mousemove', function (ev) { handleMove(ev.clientX, ev.clientY); });
+    overlay.addEventListener('mouseleave', hideHover);
+    overlay.addEventListener('touchmove', function (ev) {
+      if (ev.touches && ev.touches[0]) { handleMove(ev.touches[0].clientX, ev.touches[0].clientY); ev.preventDefault(); }
+    }, { passive: false });
+    overlay.addEventListener('touchend', hideHover);
+  }
+
+  function renderPriceChart(container, series) {
+    if (!series || series.length < 2) { container.innerHTML = '<div class="chart-empty">历史数据不足，暂时画不出曲线</div>'; return; }
+    var dates = series.map(function (p) { return p[0]; });
+    var prices = series.map(function (p) { return p[1]; });
     function movingAvg(vals, w) {
       var out = [];
       for (var i = 0; i < vals.length; i++) {
@@ -1045,18 +1205,15 @@
       return out;
     }
     var ma7 = movingAvg(prices, 7), ma30 = movingAvg(prices, 30);
-    var gridLines = [];
-    for (var g = 0; g <= 3; g++) {
-      var gv = min + (max - min) * g / 3;
-      gridLines.push('<line x1="' + padL + '" x2="' + (W - padR) + '" y1="' + y(gv).toFixed(1) + '" y2="' + y(gv).toFixed(1) + '" stroke="currentColor" stroke-opacity="0.12" />' +
-        '<text x="4" y="' + (y(gv) + 3).toFixed(1) + '" font-size="9" fill="currentColor" fill-opacity="0.55" font-family="IBM Plex Mono, monospace">' + gv.toFixed(1) + '</text>');
-    }
-    return '<svg class="price-chart" viewBox="0 0 ' + W + ' ' + H + '" style="color:var(--text)">' +
-      gridLines.join('') +
-      '<path d="' + pathFor(ma30) + '" fill="none" stroke="var(--text-dim)" stroke-width="1.2" stroke-dasharray="3,3" />' +
-      '<path d="' + pathFor(ma7) + '" fill="none" stroke="var(--profit)" stroke-width="1.3" />' +
-      '<path d="' + pathFor(prices) + '" fill="none" stroke="var(--gold)" stroke-width="1.8" />' +
-      '</svg>';
+    var seriesList = [
+      { label: 'MA30', color: 'var(--text-dim)', dashed: true, width: 1.2, points: dates.map(function (d, i) { return [d, ma30[i]]; }) },
+      { label: 'MA7', color: 'var(--profit)', width: 1.3, points: dates.map(function (d, i) { return [d, ma7[i]]; }) },
+      { label: '卖价', color: 'var(--gold)', width: 1.8, points: series },
+    ];
+    renderTimeSeriesChart(container, seriesList, {
+      yFormat: function (v) { return v.toFixed(1); },
+      tooltipFormat: function (v) { return v.toFixed(2) + ' TIX'; },
+    });
   }
 
   function loadChartFor(mtgoId) {
@@ -1068,7 +1225,7 @@
       var c2 = document.getElementById('chart-container');
       if (!c2) return;
       if (!snap.exists) { c2.innerHTML = '<div class="chart-empty">还没有这个版本的历史曲线数据</div>'; return; }
-      c2.innerHTML = buildChart((snap.data() || {}).series || []);
+      renderPriceChart(c2, (snap.data() || {}).series || []);
     }).catch(function () {
       var c2 = document.getElementById('chart-container');
       if (c2) c2.innerHTML = '<div class="chart-empty">加载曲线失败</div>';
@@ -1169,10 +1326,10 @@
       '<span><span class="sw" style="background:var(--gold);"></span>卖价（当前选中版本，GoatBots历史）</span>' +
       '<span><span class="sw" style="background:var(--profit);"></span>MA7</span>' +
       '<span><span class="sw" style="background:var(--text-dim);border-top:1px dashed var(--text-dim);height:0;"></span>MA30</span>' +
-      '</div><div id="chart-container">加载价格曲线…</div></div>';
+      '</div><div id="chart-container" class="chart-target">加载价格曲线…</div></div>';
 
     html += '<div class="chart-wrap"><div class="chart-legend" id="usage-chart-legend"></div>' +
-      '<div id="usage-chart-container">加载使用率曲线…</div></div>';
+      '<div id="usage-chart-container" class="chart-target">加载使用率曲线…</div></div>';
 
     body.innerHTML = html;
 
@@ -1210,49 +1367,6 @@
     return metagameUsageDocsPromise;
   }
 
-  function buildUsageChart(seriesByFormat) {
-    var formats = Object.keys(seriesByFormat).filter(function (f) { return seriesByFormat[f].length; });
-    if (!formats.length) return { html: '<div class="chart-empty">最近' + USAGE_CHART_DAYS + '天内没有这张卡的赛事使用率数据</div>', legend: '' };
-
-    var allPoints = [];
-    formats.forEach(function (f) { seriesByFormat[f].forEach(function (p) { allPoints.push(p); }); });
-    var dates = allPoints.map(function (p) { return new Date(p[0]).getTime(); });
-    var minD = Math.min.apply(null, dates), maxD = Math.max.apply(null, dates);
-    if (minD === maxD) { minD -= 86400000; maxD += 86400000; }
-    var rates = allPoints.map(function (p) { return p[1]; });
-    var maxR = Math.max.apply(null, rates.concat([0.01])) * 1.15;
-
-    var W = 640, H = 160, padL = 40, padR = 10, padT = 10, padB = 18;
-    function x(t) { return padL + ((t - minD) / (maxD - minD)) * (W - padL - padR); }
-    function y(v) { return padT + (1 - v / maxR) * (H - padT - padB); }
-
-    var grid = '';
-    for (var i = 0; i <= 4; i++) {
-      var gy = padT + (i / 4) * (H - padT - padB);
-      var val = maxR * (1 - i / 4);
-      grid += '<line x1="' + padL + '" x2="' + (W - padR) + '" y1="' + gy + '" y2="' + gy + '" stroke="currentColor" stroke-opacity="0.08" />' +
-        '<text x="2" y="' + (gy + 3) + '" font-size="9" fill="currentColor" fill-opacity="0.5">' + (val * 100).toFixed(0) + '%</text>';
-    }
-
-    var paths = formats.map(function (f) {
-      var pts = seriesByFormat[f].slice().sort(function (a, b) { return a[0].localeCompare(b[0]); });
-      var d = pts.map(function (p, i) {
-        return (i === 0 ? 'M' : 'L') + x(new Date(p[0]).getTime()).toFixed(1) + ',' + y(p[1]).toFixed(1);
-      }).join(' ');
-      var dots = pts.map(function (p) {
-        return '<circle cx="' + x(new Date(p[0]).getTime()).toFixed(1) + '" cy="' + y(p[1]).toFixed(1) + '" r="2.2" fill="' + (USAGE_FORMAT_COLOR[f] || 'var(--gold)') + '" />';
-      }).join('');
-      return '<path d="' + d + '" fill="none" stroke="' + (USAGE_FORMAT_COLOR[f] || 'var(--gold)') + '" stroke-width="1.6" />' + dots;
-    }).join('');
-
-    var legend = formats.map(function (f) {
-      return '<span><span class="sw" style="background:' + (USAGE_FORMAT_COLOR[f] || 'var(--gold)') + ';"></span>' + (FORMAT_LABEL[f] || f) + '使用率</span>';
-    }).join('');
-
-    var html = '<svg class="price-chart" viewBox="0 0 ' + W + ' ' + H + '" style="color:var(--text)">' + grid + paths + '</svg>';
-    return { html: html, legend: legend };
-  }
-
   function loadUsageTrend(name) {
     var container = document.getElementById('usage-chart-container');
     var legendEl = document.getElementById('usage-chart-legend');
@@ -1284,9 +1398,23 @@
           return [wk, vals.reduce(function (a, b) { return a + b; }, 0) / vals.length];
         });
       });
-      var result = buildUsageChart(seriesByFormat);
-      c2.innerHTML = result.html;
-      if (legendEl2) legendEl2.innerHTML = result.legend;
+      var formats = Object.keys(seriesByFormat).filter(function (f) { return seriesByFormat[f].length; });
+      if (!formats.length) {
+        c2.innerHTML = '<div class="chart-empty">最近' + USAGE_CHART_DAYS + '天内没有这张卡的赛事使用率数据</div>';
+        if (legendEl2) legendEl2.innerHTML = '';
+        return;
+      }
+      var seriesList = formats.map(function (f) {
+        return { label: (FORMAT_LABEL[f] || f) + '使用率', color: USAGE_FORMAT_COLOR[f] || 'var(--gold)', width: 1.6, showDots: true, points: seriesByFormat[f] };
+      });
+      renderTimeSeriesChart(c2, seriesList, {
+        height: 170, padB: 28, yMinFixed: 0,
+        yFormat: function (v) { return (v * 100).toFixed(0) + '%'; },
+        tooltipFormat: function (v) { return (v * 100).toFixed(1) + '%'; },
+      });
+      if (legendEl2) legendEl2.innerHTML = seriesList.map(function (s) {
+        return '<span><span class="sw" style="background:' + s.color + ';"></span>' + escapeHtml(s.label) + '</span>';
+      }).join('');
     }).catch(function () {
       var c2 = document.getElementById('usage-chart-container');
       if (c2) c2.innerHTML = '<div class="chart-empty">加载使用率数据失败</div>';
