@@ -5,11 +5,11 @@ from datetime import date, timedelta
 import storage
 
 
-def _price_n_days_ago(history: list[tuple[str, float]], n: int):
+def _price_n_days_ago(history: list[tuple[str, float]], n: int, as_of: date):
     """history 是 [(date_str, price), ...]，按时间升序。找 >= n 天前最近的一条。"""
     if not history:
         return None
-    target = (date.today() - timedelta(days=n)).isoformat()
+    target = (as_of - timedelta(days=n)).isoformat()
     candidate = None
     for d, p in history:
         if d <= target:
@@ -19,13 +19,21 @@ def _price_n_days_ago(history: list[tuple[str, float]], n: int):
     return candidate
 
 
-def compute(conn, mtgo_id: int, current_price: float) -> dict:
-    history = storage.price_history_for(conn, mtgo_id)
+def from_history(history: list[tuple[str, float]], current_price: float, as_of: date) -> dict:
+    """纯函数版本：直接吃一段已经在内存里的 (date_str, price) 历史序列，不查数据库。
+
+    `research_pipeline.py` 回溯构造训练样本时会调用几万次，每次都重新查一遍 SQLite
+    太浪费——调用方自己把某张卡的全部历史一次性查出来，切片到 as_of 当天为止，
+    传进来复用。`compute()`（生产环境每日流水线用）是这个函数的一层数据库查询包装。
+    """
+    if as_of < date.today():
+        as_of_str = as_of.isoformat()
+        history = [(d, p) for d, p in history if d <= as_of_str]
     prices_only = [p for _, p in history]
 
-    p7 = _price_n_days_ago(history, 7)
-    p30 = _price_n_days_ago(history, 30)
-    p90 = _price_n_days_ago(history, 90)
+    p7 = _price_n_days_ago(history, 7, as_of)
+    p30 = _price_n_days_ago(history, 30, as_of)
+    p90 = _price_n_days_ago(history, 90, as_of)
 
     def pct(old, new):
         if old is None or old == 0:
@@ -63,3 +71,11 @@ def compute(conn, mtgo_id: int, current_price: float) -> dict:
         "ma30": ma30,
         "days_of_history": len(prices_only),
     }
+
+
+def compute(conn, mtgo_id: int, current_price: float, as_of: date | None = None) -> dict:
+    """指标计算，查数据库版本（每日流水线用）。`as_of` 默认今天；传一个历史日期可以
+    算出"如果站在那一天看，这些指标会是什么样子"，避免用到未来数据。"""
+    as_of = as_of or date.today()
+    history = storage.price_history_for(conn, mtgo_id, limit_days=800)
+    return from_history(history, current_price, as_of)

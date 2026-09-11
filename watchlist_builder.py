@@ -15,7 +15,7 @@ from config import WATCHLIST_FORMATS, WATCHLIST_MIN_PRICE_TIX
 NORMAL_RARITIES = {"Common", "Uncommon", "Rare", "Mythic", "Special"}
 
 
-def _load_cards_and_legality(conn):
+def load_cards_and_legality(conn):
     cards = {
         row[0]: {"name": row[1], "cardset": row[2], "rarity": row[3], "foil": row[4]}
         for row in conn.execute("SELECT mtgo_id, name, cardset, rarity, foil FROM cards")
@@ -29,7 +29,7 @@ def _load_cards_and_legality(conn):
 
 def build_candidate_names(conn, today_prices: dict) -> set[str]:
     """返回入选候选池的卡名集合（不区分版本/foil）。"""
-    cards, legality = _load_cards_and_legality(conn)
+    cards, legality = load_cards_and_legality(conn)
 
     names = set()
     for mid_str, price in today_prices.items():
@@ -54,7 +54,7 @@ def build_candidate_names(conn, today_prices: dict) -> set[str]:
 def versions_by_name(conn, names: set[str]) -> dict[str, list[dict]]:
     """返回 {name: [{mtgo_id, set, rarity, foil}, ...]}，包含该卡名下所有已知印刷版本
     （不管价格高低、foil 与否），用于"点进去看所有版本"的详情页。"""
-    cards, _ = _load_cards_and_legality(conn)
+    cards, _ = load_cards_and_legality(conn)
     result = {name: [] for name in names}
     for mid, info in cards.items():
         name = info["name"] or ""

@@ -101,10 +101,11 @@
   .news-item .news-bad { color: var(--loss); font-weight: 600; }
   .news-item .news-good { color: var(--profit); font-weight: 600; }
 
-  .ask-box { border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin-bottom: 18px; background: var(--paper-raise); }
-  .ask-head { font-family: 'Fraunces', Georgia, serif; font-size: 14px; font-weight: 600; margin-bottom: 6px; }
-  .ask-output { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 13.5px; line-height: 1.65; white-space: pre-wrap; }
-  .ask-output.err { color: var(--loss); }
+  .imp-row { display: flex; align-items: center; gap: 10px; margin-bottom: 7px; font-size: 12.5px; }
+  .imp-label { width: 150px; flex-shrink: 0; color: var(--text-dim); }
+  .imp-bar-track { flex: 1; background: var(--line); border-radius: 4px; height: 8px; overflow: hidden; }
+  .imp-bar-fill { height: 100%; background: var(--gold); }
+  .imp-value { width: 55px; text-align: right; font-family: 'IBM Plex Mono', monospace; color: var(--text-dim); flex-shrink: 0; }
 
   table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
   th {
@@ -221,6 +222,7 @@
   <button data-view="rise">上涨观察 <span class="badge mono" id="tab-rise-count"></span></button>
   <button data-view="portfolio">持仓 <span class="badge mono" id="tab-portfolio-count"></span></button>
   <button data-view="obs">买价记录 <span class="badge mono" id="tab-obs-count"></span></button>
+  <button data-view="research">数据研究</button>
 </nav>
 
 <main>
@@ -345,6 +347,33 @@
     </section>
   </section>
 
+  <!-- RESEARCH VIEW -->
+  <section class="view" id="view-research">
+    <section class="panel" style="border:none;padding:0;margin-bottom:0;">
+      <p class="panel-note">
+        每周离线跑一次的探索性研究，不是每日流程的一部分，也不直接决定仪表盘上的研判结论——
+        用 GoatBots 两年历史卖价回溯构造"出现某个信号后14天价格是否真的涨了8%以上"的训练样本，
+        训练一个 LightGBM 模型，看数据本身能校准出什么，跟
+        <code>strategies/supply_vs_demand_framework.yaml</code> 里写的人工规则互相印证。
+        样本量有限、模型也不知道禁限公告/新闻这类情报面信息，<strong>预测概率仅供参考，
+        不是交易建议</strong>。
+      </p>
+      <div id="research-empty" class="empty-state" hidden>还没有研究结果，等每周研究任务跑一次。</div>
+      <div id="research-body" hidden>
+        <div class="ledger" id="research-ledger" style="margin-bottom:20px;"></div>
+        <h3 style="font-size:15px;margin-bottom:8px;">特征重要性（模型认为哪些指标最能预测反弹）</h3>
+        <div id="research-importance" style="margin-bottom:22px;"></div>
+        <h3 style="font-size:15px;margin-bottom:8px;">本周模型评分最高的候选（预测反弹概率降序）</h3>
+        <div class="table-wrap">
+          <table id="research-table">
+            <thead><tr><th>卡牌</th><th class="num">现价</th><th class="num">7日</th><th class="num">30日</th><th class="num">预测反弹概率</th></tr></thead>
+            <tbody id="research-table-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </section>
+
   <!-- CARD DETAIL VIEW -->
   <section class="view" id="view-detail">
     <button class="back-btn" id="detail-back">&larr; 返回列表</button>
@@ -360,7 +389,6 @@
 <script>
 (function () {
   var db = null;
-  var sampleCap = null;
   var fallItems = [], riseItems = [], holdingItems = [];
   var currentDetailReturnView = 'fall';
 
@@ -491,6 +519,56 @@
     strip.hidden = false;
   }
 
+  var FEATURE_LABEL = {
+    chg_7d_pct: '7日涨跌幅', chg_30d_pct: '30日涨跌幅', chg_90d_pct: '90日涨跌幅',
+    near_90d_low: '接近90日低点', near_90d_high: '接近90日高点',
+    big_drop_7d: '7日大跌标记', big_gain_7d: '7日大涨标记',
+    days_of_history: '历史天数', ma7: '7日均价', ma30: '30日均价', price: '现价',
+    rarity_code: '稀有度', foil: '是否Foil', legal_modern: '摩登合法', legal_legacy: '薪传合法',
+  };
+
+  function renderResearch(run) {
+    var empty = document.getElementById('research-empty');
+    var body = document.getElementById('research-body');
+    if (!run || run.status !== 'ok') {
+      empty.hidden = false; body.hidden = true;
+      if (run && run.status === 'insufficient_data') empty.textContent = run.message || '数据量不够，本次跳过。';
+      return;
+    }
+    empty.hidden = true; body.hidden = false;
+
+    document.getElementById('research-ledger').innerHTML =
+      '<div class="tile"><div class="label">训练日期</div><div class="value mono">' + escapeHtml(run.runDate || '—') + '</div></div>' +
+      '<div class="tile"><div class="label">训练/验证样本</div><div class="value mono">' + (run.trainRows || 0) + ' / ' + (run.validRows || 0) + '</div></div>' +
+      '<div class="tile"><div class="label">验证集准确率</div><div class="value gold mono">' + fmtPct(run.validAccuracy) + '</div></div>' +
+      '<div class="tile"><div class="label">基线准确率</div><div class="value mono">' + fmtPct(run.baselineAccuracy) + '</div></div>' +
+      '<div class="tile"><div class="label">AUC</div><div class="value mono">' + (run.validAuc == null ? '—' : run.validAuc) + '</div></div>' +
+      '<div class="tile"><div class="label">预测窗口</div><div class="value mono">' + (run.lookaheadDays || '—') + ' 天涨' + fmtPct(run.reboundThreshold) + '</div></div>';
+
+    var imp = run.featureImportance || [];
+    var maxImp = imp.length ? Math.max.apply(null, imp.map(function (f) { return f.importance; })) : 1;
+    document.getElementById('research-importance').innerHTML = imp.map(function (f) {
+      var pct = maxImp ? Math.round((f.importance / maxImp) * 100) : 0;
+      return '<div class="imp-row"><div class="imp-label">' + escapeHtml(FEATURE_LABEL[f.feature] || f.feature) + '</div>' +
+        '<div class="imp-bar-track"><div class="imp-bar-fill" style="width:' + pct + '%;"></div></div>' +
+        '<div class="imp-value">' + f.importance + '</div></div>';
+    }).join('') || '<p class="panel-note">无数据</p>';
+
+    var cands = run.topCandidates || [];
+    document.getElementById('research-table-body').innerHTML = cands.map(function (r) {
+      return '<tr><td class="card-name">' + escapeHtml(r.name) + '</td>' +
+        '<td class="num price">' + fmtTix(r.price) + '</td>' +
+        '<td class="num">' + chgHtml(r.chg7d) + '</td>' +
+        '<td class="num">' + chgHtml(r.chg30d) + '</td>' +
+        '<td class="num price">' + fmtPct(r.predictedReboundProb) + '</td></tr>';
+    }).join('') || '<tr><td colspan="5" class="panel-note">无数据</td></tr>';
+  }
+
+  function fmtPct(x) {
+    if (x === null || x === undefined || isNaN(x)) return '—';
+    return (x * 100).toFixed(1) + '%';
+  }
+
   function renderObs(items) {
     var tbl = document.getElementById('obs-table');
     var empty = document.getElementById('obs-empty');
@@ -615,14 +693,6 @@
     html += '<div class="note-box">' + verdictChip(c.verdict) +
       '<div style="margin-top:8px;">' + escapeHtml(c.note || '暂无研判说明，等待每日分析任务生成。') + '</div></div>';
 
-    html += '<div class="ask-box" id="ask-box" hidden>' +
-      '<div class="ask-head">进一步问 Claude</div>' +
-      '<div class="panel-note" style="margin:0 0 8px;">基于这张卡当前页面上的数据（价格、涨跌幅、研判笔记）直接回答，不会额外联网查最新消息——想知道"这几天真实发生了什么"还是得靠每日分析任务的 WebSearch 核实结果。</div>' +
-      '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
-      '<input type="text" id="ask-input" placeholder="例如：这个研判可信吗？还有什么该注意的？" style="flex:1;min-width:200px;background:var(--paper);border:1px solid var(--line);border-radius:6px;padding:7px 9px;font-size:13.5px;color:var(--text);font-family:\'IBM Plex Sans\',sans-serif;" />' +
-      '<button id="ask-btn" style="background:var(--gold);color:#1c1305;border:none;border-radius:6px;padding:7px 16px;font-size:13.5px;font-weight:600;cursor:pointer;">问</button>' +
-      '</div><div id="ask-output" class="ask-output" hidden></div></div>';
-
     html += '<div class="chart-wrap"><div class="chart-legend">' +
       '<span><span class="sw" style="background:var(--gold);"></span>卖价（当前选中版本，GoatBots历史）</span>' +
       '<span><span class="sw" style="background:var(--profit);"></span>MA7</span>' +
@@ -637,62 +707,6 @@
 
     selectVersion(versions, primaryId);
     if (!c.imageUrl) loadCardArt(primaryId);
-    wireAskBox(c);
-  }
-
-  function buildAskPrompt(c, question) {
-    var versions = c.versions || [];
-    return '你是 MOTrade 仪表盘里的一个说明助手，回答关于下面这张 MTGO 单卡的问题。' +
-      '这是它当前页面上已有的数据快照（不是实时数据，你没有联网能力，不能查询比这更新的信息，' +
-      '如果用户问的是这份数据回答不了的事情——比如今天/最近具体发生了什么新闻——要明确说明这一点，' +
-      '不要编造）：\n\n' +
-      '卡名：' + c.name + '\n' +
-      '稀有度：' + (c.rarity || '未知') + '\n' +
-      '已知版本数：' + versions.length + '\n' +
-      '涉及赛制：' + ((c.formats && c.formats.length) ? c.formats.join('、') : '未见近期竞技赛事采用') + '\n' +
-      '当前最低价：' + fmtTix(c.bestPrice) + ' TIX（来源：' + (SOURCE_LABEL[c.bestSource] || c.bestSource) + '）\n' +
-      '7日涨跌：' + (c.chg7d == null ? '—' : c.chg7d + '%') + '，30日涨跌：' + (c.chg30d == null ? '—' : c.chg30d + '%') + '\n' +
-      '90日低点：' + fmtTix(c.low90) + '，MA7：' + fmtTix(c.ma7) + '，MA30：' + fmtTix(c.ma30) + '\n' +
-      '每日分析研判分类：' + (c.verdict || '未分类') + '\n' +
-      '每日分析笔记：' + (c.note || '（暂无）') + '\n\n' +
-      '用户的问题：' + question + '\n\n' +
-      '用中文简短回答（3-6句话，不用分点符号堆砌），基于上面的数据展开解释或给出参考意见即可。';
-  }
-
-  function wireAskBox(c) {
-    var box = document.getElementById('ask-box');
-    if (!box) return;
-    if (!sampleCap) { box.hidden = true; return; }
-    box.hidden = false;
-    var input = document.getElementById('ask-input');
-    var btn = document.getElementById('ask-btn');
-    var out = document.getElementById('ask-output');
-    btn.addEventListener('click', async function () {
-      var question = input.value.trim() || '这张卡最近的走势和研判说明里，有什么值得我进一步关注的地方？';
-      btn.disabled = true;
-      out.hidden = false; out.className = 'ask-output'; out.textContent = 'Claude 思考中…';
-      try {
-        var result = await sampleCap(buildAskPrompt(c, question), {
-          modelTier: 'default',
-          onText: function (u) { out.textContent = u.text; },
-        });
-        out.textContent = result.text + (result.truncated ? '\n\n（回答被截断，可以换个更具体的小问题再问一次）' : '');
-      } catch (e) {
-        var code = e && e.code;
-        if (code === 'not_granted' || code === 'sampling_disabled' || code === 'not_declared' || code === 'capability_disabled' || code === 'capability_removed') {
-          box.hidden = true;
-        } else if (code === 'rate_limited') {
-          out.className = 'ask-output err'; out.textContent = '请求太频繁了，稍后再试。';
-        } else if (code === 'refused') {
-          out.hidden = true;
-        } else {
-          out.className = 'ask-output err';
-          out.textContent = (e && e.text) ? e.text : '这次没问出来，换个问法再试一次。';
-        }
-      } finally {
-        btn.disabled = false;
-      }
-    });
   }
 
   function loadCardArt(mtgoId) {
@@ -733,12 +747,15 @@
     if (!window.claude || !window.claude.use) { renderList('fall-body', [], 'fall'); renderList('rise-body', [], 'rise'); return; }
     db = await window.claude.use('db');
     if (!db) { renderList('fall-body', [], 'fall'); renderList('rise-body', [], 'rise'); return; }
-    sampleCap = await window.claude.use('sample').catch(function () { return null; });
 
     db.collection('news_events').onSnapshot(function (snap) {
       var events = snap.docs.map(function (d) { return d.data(); });
       renderNewsStrip(events);
     }, function () { renderNewsStrip([]); });
+
+    db.collection('research_runs').doc('latest').onSnapshot(function (snap) {
+      renderResearch(snap.exists ? snap.data() : null);
+    }, function () { renderResearch(null); });
 
     db.collection('watchlist').onSnapshot(function (snap) {
       var all = snap.docs.map(function (d) {
