@@ -256,9 +256,9 @@
         <div id="home-supply-list"></div>
         <div id="home-supply-empty" class="empty-state" hidden>暂无最新的供给端事件记录（新系列上线/重印释放供给等）。</div>
 
-        <div class="home-sub-head">禁限牌情况概览</div>
+        <div class="home-sub-head">最新禁限变动</div>
         <div id="home-br-overview"></div>
-        <div id="home-br-empty" class="empty-state" hidden>暂无禁限名单快照，等待每日任务写入。</div>
+        <div id="home-br-empty" class="empty-state" hidden>暂无禁限变动记录。</div>
       </section>
 
       <section class="panel home-tc-panel">
@@ -635,16 +635,25 @@
     else { supplyEmpty.hidden = true; supplyList.innerHTML = supply.map(renderNewsRow).join(''); }
   }
 
-  function renderBrOverview(doc) {
+  function renderLatestBrChange(events) {
     var wrap = document.getElementById('home-br-overview');
     var empty = document.getElementById('home-br-empty');
-    var formats = doc ? Object.keys(doc).filter(function (k) { return Array.isArray(doc[k]) && doc[k].length; }) : [];
-    if (!formats.length) { wrap.innerHTML = ''; empty.hidden = false; return; }
+    var brEvents = events.filter(function (e) { return e.type === 'banned_restricted'; });
+    if (!brEvents.length) { wrap.innerHTML = ''; empty.hidden = false; empty.textContent = '暂无禁限变动记录。'; return; }
+    var latestDate = brEvents.reduce(function (max, e) { return (e.date || '') > max ? e.date : max; }, '');
+    var rows = brEvents.filter(function (e) { return e.date === latestDate; }).map(function (e) {
+      var added = (e.added || []).map(function (n) { return escapeHtml(n); }).join('、');
+      if (!added) return '';
+      return '<div class="br-cards"><span class="mono" style="color:var(--text-dim);">[' + escapeHtml(e.format || '') + ']</span> ' + added + '</div>';
+    }).filter(function (r) { return r; });
+    if (!rows.length) {
+      wrap.innerHTML = '';
+      empty.hidden = false;
+      empty.textContent = '最近一次禁限公告（' + latestDate + '）没有新增禁用的卡。';
+      return;
+    }
     empty.hidden = true;
-    // 只给个数概览，不逐张列名字——具体新增/解除了哪张卡看上面"最新资讯"里的事件记录即可。
-    wrap.innerHTML = '<div class="br-cards">' + formats.map(function (fmt) {
-      return escapeHtml(fmt) + ' ' + doc[fmt].length + ' 张';
-    }).join(' &nbsp;·&nbsp; ') + '</div>';
+    wrap.innerHTML = '<div class="panel-note" style="margin:0 0 6px;">' + escapeHtml(latestDate) + '</div>' + rows.join('');
   }
 
   var TC_NAME = 'Treasure Chest';
@@ -1233,11 +1242,8 @@
     db.collection('news_events').onSnapshot(function (snap) {
       var events = snap.docs.map(function (d) { return d.data(); });
       renderHomeNews(events);
-    }, function () { renderHomeNews([]); });
-
-    db.collection('site_meta').doc('banned_restricted_snapshot').onSnapshot(function (snap) {
-      renderBrOverview(snap.exists ? snap.data() : null);
-    }, function () { renderBrOverview(null); });
+      renderLatestBrChange(events);
+    }, function () { renderHomeNews([]); renderLatestBrChange([]); });
 
     db.collection('special_items').doc('treasure_chest').onSnapshot(function (snap) {
       renderTreasureChest(snap.exists ? snap.data() : null);
