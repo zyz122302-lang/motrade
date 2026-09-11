@@ -301,7 +301,7 @@
         <div class="full"><label for="h-name">卡牌名称</label><input id="h-name" type="text" placeholder="例如 Ragavan, Nimble Pilferer" required /></div>
         <div><label for="h-qty">数量</label><input id="h-qty" type="number" min="1" step="1" value="1" required /></div>
         <div><label for="h-cost">成本价 (TIX / 张)</label><input id="h-cost" type="number" min="0" step="0.01" required /></div>
-        <div class="full"><label for="h-foil">版本</label><select id="h-foil"><option value="0">普通 (non-foil)</option><option value="1">Foil</option></select></div>
+        <div class="full"><label for="h-set">版本 / Set（如 PRM #339、MH3 F，可空）</label><input id="h-set" type="text" placeholder="例如 PRM #339 或 MH3 F" /></div>
         <button type="submit">添加持仓</button>
         <div class="form-msg full" id="holding-msg"></div>
       </form>
@@ -459,13 +459,23 @@
     if (btn) btn.classList.add('active');
   }
 
-  function priceForName(name) {
-    var needle = (name || '').trim().toLowerCase();
+  function priceForHolding(h) {
+    var needle = (h.name || '').trim().toLowerCase();
     var all = fallItems.concat(riseItems);
-    for (var i = 0; i < all.length; i++) {
-      if ((all[i].name || '').trim().toLowerCase() === needle) return all[i].bestPrice;
+    var match = all.filter(function (c) { return (c.name || '').trim().toLowerCase() === needle; })[0];
+    if (!match) return null;
+    if (h.set) {
+      var target = h.set.trim();
+      var v = (match.versions || []).filter(function (vv) { return versionLabel(vv) === target; })[0];
+      if (v) {
+        var gb = v.goatbotsPrice, ch = v.cardhoarderPrice;
+        var vp = (gb != null && ch != null) ? Math.min(gb, ch) : (gb != null ? gb : ch);
+        if (vp != null) return vp;
+      }
+      // 没找到完全匹配的版本（比如手打的版本字符串跟系统里的不完全一样），
+      // 退回这张卡的最低价，好过完全不显示
     }
-    return null;
+    return match.bestPrice;
   }
   var SOURCE_LABEL = { goatbots: 'GoatBots', cardhoarder: 'Cardhoarder' };
 
@@ -519,12 +529,13 @@
     tbl.hidden = false; empty.hidden = true;
     var totalPl = 0, anyPriced = false;
     body.innerHTML = holdingItems.map(function (h) {
-      var cur = priceForName(h.name);
+      var cur = priceForHolding(h);
       var pl = null;
       if (cur !== null) { pl = (cur - h.cost) * h.qty; totalPl += pl; anyPriced = true; }
       var plClass = pl === null ? '' : (pl >= 0 ? 'pl-pos' : 'pl-neg');
+      var versionChip = h.set ? h.set : (h.foil ? 'F' : '');
       return '<tr>' +
-        '<td class="card-name">' + escapeHtml(h.name) + (h.foil ? '<span class="set-chip">F</span>' : '') + '</td>' +
+        '<td class="card-name">' + escapeHtml(h.name) + (versionChip ? '<span class="set-chip">' + escapeHtml(versionChip) + '</span>' : '') + '</td>' +
         '<td class="num mono">' + h.qty + '</td>' +
         '<td class="num price">' + fmtTix(h.cost) + '</td>' +
         '<td class="num price">' + (cur === null ? '未匹配' : fmtTix(cur)) + '</td>' +
@@ -654,6 +665,13 @@
     var all = fallItems.concat(riseItems);
     var rows = [];
     holdingItems.forEach(function (h) {
+      // 持仓如果记了具体版本（h.set，格式跟别处一致，比如 "PRM #339 F"），只展示这一条——
+      // 你实际持有的就是这一个版本，不用把这张卡的所有已知版本都列出来查一遍。
+      if (h.set) {
+        rows.push({ name: h.name, mtgoId: null, set: '', foil: null, collectorNumber: '', rawLabel: h.set, first: true, groupSize: 1 });
+        return;
+      }
+      // 老记录没有具体版本（只有 foil 布尔值）时，退回旧逻辑：借用观察池里同名卡的完整版本列表
       var match = all.filter(function (c) { return c.name === h.name; })[0];
       var vs = match ? versionsForCard(match) : [{ mtgoId: null, set: '', foil: h.foil, collectorNumber: '' }];
       vs.forEach(function (v, i) {
@@ -663,9 +681,12 @@
     return rows;
   }
 
-  function rowKey(r) { return r.name + '|' + (r.mtgoId == null ? '' : r.mtgoId) + '|' + r.set + '|' + (r.collectorNumber || ''); }
+  function rowKey(r) {
+    return r.name + '|' + (r.mtgoId == null ? '' : r.mtgoId) + '|' + (r.rawLabel || (r.set + '|' + (r.collectorNumber || '')));
+  }
 
   function versionLabel(r) {
+    if (r.rawLabel != null) return r.rawLabel || '?';
     return (r.set || '?') + (r.collectorNumber ? ' #' + r.collectorNumber : '') + (r.foil ? ' F' : '');
   }
 
@@ -1152,11 +1173,11 @@
       var name = document.getElementById('h-name').value.trim();
       var qty = parseFloat(document.getElementById('h-qty').value);
       var cost = parseFloat(document.getElementById('h-cost').value);
-      var foil = document.getElementById('h-foil').value === '1';
+      var set = document.getElementById('h-set').value.trim();
       if (!name || !qty || isNaN(cost)) { msg.textContent = '请填写完整'; msg.className = 'form-msg err full'; return; }
       btn.disabled = true; msg.textContent = ''; msg.className = 'form-msg full';
       try {
-        await db.collection('portfolio').add({ name: name, qty: qty, cost: cost, foil: foil, addedAt: todayStr() });
+        await db.collection('portfolio').add({ name: name, qty: qty, cost: cost, set: set, addedAt: todayStr() });
         ev.target.reset(); document.getElementById('h-qty').value = 1;
         msg.textContent = '已添加'; msg.className = 'form-msg ok full';
       } catch (e) { msg.textContent = '保存失败: ' + (e && e.message ? e.message : '未知错误'); msg.className = 'form-msg err full'; }
