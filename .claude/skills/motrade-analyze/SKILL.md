@@ -126,24 +126,40 @@ universeSize, totalAnchorRows, featureCoverage, windows: {"7": {...}, "14": {...
    展示的数据源（前端按 `{format: [card_name, ...]}` 原样渲染），所以哪怕今天没有变化、不需要
    写 `news_events` 事件，这一步也不能省略。
 
-**MTGO 新系列上线 / 维护窗口（供给面信号，定性判断，不是确定性代码）**：新系列上线会集中
-释放某些老卡的供给（拆包/重印），是常见的"价格下跌但不是需求下滑"的原因（比如之前 Godless
-Shrine、Past in Flames 的案例）。写研判前如果看到某张卡在最近几周内有明显的、集中在某个新
-系列印刷版本上的价格异动，可以顺手 `WebSearch` 一下"MTGO weekly announcement <本周日期>"
-或者"<系列名> MTGO release date"确认是不是最近有新系列/重印上线，跟前面"异常涨跌必须
-WebSearch 核实原因"的规则是同一件事，不用另外单独跑一遍。
+**供给侧信号监控（`news_events` 的 `type: "supply_open"`，定性判断，不是确定性代码）**：
+MTGO 单卡不是股票，供给几乎全由 WotC/MTGO 运营方单方面控制——用户明确指出过这一点，下面
+三类是目前已知会集中释放供给的具体机制，**不要只被动等某张候选卡出现异常涨跌才去查**，
+每天/每周主动过一遍这三类，能提前解释未来的价格异动，而不是事后才补研判：
 
-确认某张候选卡确实是"新系列/重印释放供给"驱动的价格下跌（不是需求下滑）之后，除了照常把这个
-判断写进那张卡的 `note`，**再额外**用 `write_db`（`db_op: "set"`）写一条 `news_events` 集合的
-文档，doc_id 用 `{date}-supply-{卡名或系列的slug}`（如 `2026-09-11-supply-godless-shrine`），
-内容：
+1. **新系列上线，且系列里有老卡重印**：新系列上线本身只是"日期"，真正影响供给的是它有没有
+   重印某些老卡（拆包/新版本进入流通会压低老版本溢价）。`WebSearch` "<系列名> reprints
+   spoiler"或"<系列名> MTGO release date"，确认具体重印了哪些卡（不是笼统说"这个系列会
+   释放供给"，要点名，比如"Reality Fracture 重印了 Chandra, Torch of Defiance"）。
+2. **Treasure Chest 卡池/内容概率表更新**：MTGO 官方大约每 3-4 周刷新一次 Treasure Chest
+   的内容概率表（可以拆出什么，参考"Treasure Chest 价格追踪"一节）。如果 `WebSearch` 能
+   查到这次刷新具体加入/移出了哪些单卡（不只是影响 Treasure Chest 自己的价格），把受影响
+   的卡也点名写进事件里——被移出卡池的卡少了一个供给渠道（偏利多），新加入的卡多了一个
+   供给渠道（偏利空）。查不到具体卡名的话，只记刷新日期本身，不用编。
+3. **MTGO 限时寻回老系列的 Limited 活动**（Retired Set Draft/Sealed，跟前面"每周研究任务"
+   提到的 `set_age_days` 特征背后的假设是同一个道理）：MTGO 会不定期用退役多年的老系列开
+   限时的 Draft/Sealed 活动（比如 2026 年出现过的 Urza Block Keeper Draft、LOTR/Hobbit
+   Block Sealed），这类活动如果是 "Keeper"（玩家能留下抽到/拆到的卡），就是让那个老系列的
+   实体重新流入市场——`WebSearch` "MTGO limited events schedule" 或者
+   `mtgo.com/limited-events` 能查到近期安排。不确定某场活动是不是 Keeper 模式时，如实在
+   note 里写"具体是否可保留视官方公告而定"，不要替用户下结论。
+
+三类只要确认了，都用 `write_db`（`db_op: "set"`）写一条 `news_events` 集合的文档，doc_id 用
+`{date}-supply-{关键词slug}`（如 `2026-09-11-supply-reality-fracture-reprints`），内容：
 ```
-{ date, type: "supply_open", cards: ["Godless Shrine", ...], summary: "一句话中文说明，
-  比如：新系列 XX 上线，Godless Shrine 等老卡供给集中释放，价格下跌但非需求下滑" }
+{ date, type: "supply_open", cards: ["Chandra, Torch of Defiance", ...], summary: "一句话
+  中文说明，比如：Reality Fracture（10月2日发售）重印 Chandra, Torch of Defiance 等卡，
+  预计释放这些老版本的供给，价格下跌不代表需求下滑" }
 ```
-这条会出现在仪表盘首页"供应端动态"板块，让用户不用逐张点进候选卡详情也能看到供给面的整体情况。
-这一步是可选的、事件驱动的（只有真的观察到供给释放迹象时才写，不用每天硬凑），不像禁限公告监控
-那样是每天固定要跑的步骤。
+`cards` 数组点名越具体越好，实在没有具体卡名（比如只知道刷新日期）就传空数组，`summary`
+里说清楚是哪一类机制。这条会出现在仪表盘首页"供应端动态"板块。如果这次监控发现的供给事件
+正好命中当前候选池里的某张卡，除了写事件，**还要**把判断同步写进那张卡本轮的 `note` 里，
+保持两边口径一致，不要各说各话。这一步是事件驱动的（没有新发现就不用硬写，大多数天三类都
+没有新变化是正常情况），不像禁限公告监控那样每天必须产出内容，但每天都要主动检查一遍。
 
 ## MTGO 综合资讯监控（首页"最新资讯"板块，判断尺度交给你自己把握，本技能自己负责，每天都跑）
 
