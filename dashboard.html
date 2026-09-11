@@ -253,19 +253,15 @@
       <section class="panel home-info-panel">
         <div class="panel-head"><h2>市场情报总览</h2></div>
         <p class="panel-note">
-          不只是禁限赛制公告——MTGO 客户端更新、新系列/维护窗口、赛事结构变化等只要可能影响
-          单卡供需，都会记录在这里，由每日任务判断是否构成利空/利好，不局限于某一类事件。
+          供给端信号（新系列重印、Treasure Chest 内容刷新、限时寻回活动等）和官方禁限赛制公告，
+          由每日任务判断是否构成利空/利好后写入。
         </p>
 
         <div class="home-sub-head">最新资讯</div>
-        <div id="home-news-list"></div>
-        <div id="home-news-empty" class="empty-state" hidden>暂无资讯记录，等待每日任务写入。</div>
-
-        <div class="home-sub-head">供应端动态</div>
         <div id="home-supply-list"></div>
         <div id="home-supply-empty" class="empty-state" hidden>暂无最新的供给端事件记录（新系列上线/重印释放供给等）。</div>
 
-        <div class="home-sub-head">最新禁限变动</div>
+        <div class="home-sub-head">禁限牌动态</div>
         <div id="home-br-overview"></div>
         <div id="home-br-empty" class="empty-state" hidden>暂无禁限变动记录。</div>
       </section>
@@ -700,14 +696,9 @@
   }
 
   function renderHomeNews(events) {
-    var list = document.getElementById('home-news-list');
-    var empty = document.getElementById('home-news-empty');
     var supplyList = document.getElementById('home-supply-list');
     var supplyEmpty = document.getElementById('home-supply-empty');
     var sorted = events.slice().sort(function (a, b) { return (b.date || '').localeCompare(a.date || ''); });
-    var general = sorted.slice(0, 8);
-    if (!general.length) { list.innerHTML = ''; empty.hidden = false; }
-    else { empty.hidden = true; list.innerHTML = general.map(renderNewsRow).join(''); }
     var supply = sorted.filter(function (e) { return e.type === 'supply_open'; }).slice(0, 6);
     if (!supply.length) { supplyList.innerHTML = ''; supplyEmpty.hidden = false; }
     else { supplyEmpty.hidden = true; supplyList.innerHTML = supply.map(renderNewsRow).join(''); }
@@ -800,8 +791,36 @@
       '<span><span class="sw" style="background:var(--text-dim);border-top:1px dashed var(--text-dim);height:0;"></span>MA30</span>' +
       '</div><div id="tc-detail-chart-container" class="chart-target">加载价格曲线…</div></div>';
 
+    html += '<h3 style="font-size:15px;margin:18px 0 4px;">供给端信号：每日 League 5-0 数量</h3>' +
+      '<p class="panel-note" style="margin:0 0 10px;">' +
+      'Treasure Chest 的供给主要来自赛事奖励：Challenge 按最终名次分级发放固定数量（报名人数不影响发放总量，' +
+      '只有赛事因人数不足被取消才会减少供给），League 则是每次 5-0 战绩发一次，5-0 人数逐日真实波动，' +
+      '是目前唯一适合当连续变量追踪的供给端指标（MTGO 官方本身就只公开 5-0 战绩牌表，数据口径上没有4-1等中间战绩可看）。' +
+      '</p>' +
+      '<div class="chart-wrap"><div id="tc-supply-chart-container" class="chart-target">加载中…</div></div>';
+
     body.innerHTML = html;
+    loadTreasureChestSupply();
     loadTreasureChestChart('tc-detail-chart-container');
+  }
+
+  function loadTreasureChestSupply() {
+    var container = document.getElementById('tc-supply-chart-container');
+    if (!container) return;
+    if (!db) { container.innerHTML = '<div class="chart-empty">数据库不可用</div>'; return; }
+    db.collection('special_items').doc('treasure_chest_supply').get().then(function (snap) {
+      var c2 = document.getElementById('tc-supply-chart-container');
+      if (!c2) return;
+      var series = snap.exists ? (snap.data() || {}).series || [] : [];
+      if (!series.length) { c2.innerHTML = '<div class="chart-empty">还没有供给端数据，等待每日任务写入。</div>'; return; }
+      renderTimeSeriesChart(c2, [{ label: '每日5-0数量', color: 'var(--rare)', width: 1.6, showDots: true, points: series }], {
+        height: 170, padB: 28, yMinFixed: 0, yFormat: function (v) { return Math.round(v); },
+        tooltipFormat: function (v) { return v + ' 份'; },
+      });
+    }).catch(function () {
+      var c2 = document.getElementById('tc-supply-chart-container');
+      if (c2) c2.innerHTML = '<div class="chart-empty">加载失败</div>';
+    });
   }
 
   var FEATURE_LABEL = {
