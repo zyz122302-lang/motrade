@@ -152,6 +152,7 @@ def run():
                     "ma7": ind.get("ma7"),
                     "ma30": ind.get("ma30"),
                     "days_of_history": ind.get("days_of_history", 0),
+                    "price_change_rate_30d": ind.get("price_change_rate_30d"),
                 })
             if not versions:
                 continue
@@ -186,6 +187,7 @@ def run():
                 "big_drop_7d": primary["big_drop_7d"],
                 "big_gain_7d": primary["big_gain_7d"],
                 "days_of_history": primary["days_of_history"],
+                "price_change_rate_30d": primary["price_change_rate_30d"],
                 "versions": versions,
             })
 

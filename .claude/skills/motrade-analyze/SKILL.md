@@ -51,8 +51,9 @@ MTGTop8 线下 2 星以上赛事牌表（只做 Modern/Legacy，每个赛制取�
 `supply_vs_demand_framework.yaml`），不是替代它，也**不接入本技能的每日流程**——由另一个
 routine（每周日 09:00 UTC 跑一次，比每日流程慢得多，要下载多年历史归档）单独触发。
 
-特征除了价格历史，还包括赛制使用率、官方禁限事件、系列发售时间（数据驱动近似值，不额外
-抓取新数据源）。该 routine 跑 `research_pipeline.py` **之前**要先做两步桥接（用 Artifact
+特征除了价格历史，还包括赛制使用率、官方禁限事件、系列发售时间、30日换手率代理指标
+（`liquidity_rate`，从已有卖价序列直接算出，不额外抓取新数据源）。该 routine 跑
+`research_pipeline.py` **之前**要先做两步桥接（用 Artifact
 工具，跟每日本技能第 1 步桥接使用率是同一个思路）：
 1. `read_db`（`db_op: "query"`）查 `metagame_usage` 集合（跟每日本技能一样，按 format 分别
    查最近的记录），拼成 `{format: [{week_of, source, sample_size, usage}, ...]}`，写到
@@ -242,6 +243,35 @@ Play Points 发奖）也会直接影响它的供给。多数时候它的价格�
    - 只取 `series` 字段，包成 `{series: [...]}`，写到 `price_history/{mtgoId}`（跟普通
      单卡版本共用同一个集合，仪表盘的走势图直接复用现成的 `buildChart` 渲染逻辑）。
 
+## 买卖价差统计（仪表盘"买价记录"页签自己的板块，本技能自己负责，每天都跑）
+
+GoatBots/Cardhoarder 的买价（bot 愿意收多少钱）故意做了防抓取处理（SVG 字形渲染，见
+`docs/PRINCIPLES.md`），**不能也不应该**绕过去自动抓——这是网站运营方明确的反爬信号，"人眼能
+看见"不等于"允许自动化抓取"。但仪表盘"买价记录"页签（`buy_observations` 集合）已经在积累一份
+完全合规的买价数据：用户自己手动查看 bot 报价后录入的 `{name, set, bot, price, noBid, date}`
+记录。这个步骤把这份数据换算成"典型买卖价差有多大"的统计量，回答"就算判断方向对了，扣掉真实
+价差之后还剩多少"这个问题——是对第2步"操作建议"的补充，不是新的选卡标准。
+
+步骤：
+1. `read_db`（`db_op: "list"`，collection `buy_observations`）读回全部记录（这个集合目前
+   数据量应该不大，`list` 一次拿完就够，不需要分页），包成 `{observations: [...]}`，写到
+   `data/buy_observations_import.json`。这个集合是空的很正常（用户刚开始积累这份数据），
+   脚本会自己处理成"样本不足"，不会报错。
+2. `python compute_spread_stats.py`——输出 `data/spread_stats.json`，结构：
+   `{ generatedAt, totalObservations, matched, skippedNoAskData, skippedNoBid,
+   byRarity: {Rare: {medianSpreadPct, sampleSize, noBidRate, noBidSampleSize,
+   insufficientSample}, ...}, overall: {同样的字段} }`。`insufficientSample=true`（样本 <5）
+   的桶 `medianSpreadPct` 会是 `null`，前端会如实显示"样本不足"，不会瞎编一个数字。
+3. 不需要额外定性判断，直接把整份 JSON 用 `write_db`（`db_op: "set"`）写到
+   `site_meta/spread_stats`（字段名保持跟脚本输出一致，不用转驼峰）。
+
+## 换手率代理指标（自动随每日流水线产生，本节不需要额外步骤）
+
+`pipeline.py` 已经在 `data/latest_watchlist.json` 的每张卡（及每个版本）里带上
+`price_change_rate_30d`（近30天卖价变化天数占比，0~1），随第4步一起写进 `watchlist` 文档，
+不需要单独抓取或额外调用脚本。写研判 note 时参考前面"换手率低的卡，波动样本代表性要打折扣"
+那条规则即可。
+
 ## 运行步骤
 
 ### 1. 跑数据管道（确定性代码，不需要 LLM）
@@ -298,6 +328,14 @@ Pauper/Modern/Legacy"），确认真实原因后再写 note。确实搜不到解
 修正/原因未确认"，不要不搜就下结论——之前就因为没搜索，把 Zeta Set 降级重印带来的 Pauper 新合法性
 （真实需求）误判成了"bot 补库存价格修正"，这是要避免重犯的错误。
 
+**换手率低的卡，波动样本代表性要打折扣**：`data/latest_watchlist.json` 里每张卡（及每个版本）
+带一个 `price_change_rate_30d`（0~1，近30天里 GoatBots 卖价与前一天不同的天数占比，越低说明
+这张卡越久没被重新定价，即 bot 几乎没有人跟它交易）。这不是新抓的数据，是从已有的每日卖价序列
+里顺手算出来的换手率代理指标。如果一张卡同时满足"换手率很低（比如 <20%）"和"`big_drop_7d`/
+`big_gain_7d` 触发了"，这次波动很可能只是一两笔孤立挂单造成的，不代表真实供需变化，note 里要
+点破"该版本近期几乎无人交易，本次涨跌样本代表性存疑"，倾向标 `caution`，不要当成真实动能处理；
+反过来，换手率高（比如 >60%）又出现明显涨跌，才是更值得信的信号。
+
 每张卡的研判尽量精炼成这几部分（对应原项目的四段式 dashboard，但不需要字段名完全一致）：
 - **结论**：一句话，属于哪个策略分类 + 要不要现在关注
 - **数据面**：现价、7日/30日变动、是否接近90日低点
@@ -331,13 +369,14 @@ Cube/Commander 向的，情报面判断时要说明"未见近期 Modern/Legacy/S
   bestPrice, bestSource,       // "goatbots" | "cardhoarder"，所有版本+两个数据源里的最低价
   primaryMtgoId,                // 达成 bestPrice 的那个版本的 mtgo_id
   chg7d, chg30d, low90, ma7, ma30,   // 取自 primary version（最低价那个版本）的指标
+  priceChangeRate30d,   // 30日换手率代理指标（0~1，近30天价格变化的天数占比），取自 primary version
   formats: ["modern","legacy"],   // 直接抄 latest_watchlist.json 里这张卡的 formats 数组
   direction: "rise",   // 上涨候选必须带这个字段；下跌候选不用带（省略即默认下跌）
   verdict: "stabilizing" | "falling_knife" | "established" | "momentum" | "caution" | "new_set",
   note: "一两句话的研判，中文，供仪表盘详情页展示",
   imageUrl, imageAssetId,   // 卡图，见下面"卡图"小节；抓不到图就都不要写这两个字段
   versions: [   // 该卡的全部已知版本，仪表盘详情页用这个渲染版本切换器
-    { mtgoId, set, foil, collectorNumber, goatbotsPrice, cardhoarderPrice, chg7d, chg30d, low90, ma7, ma30 },
+    { mtgoId, set, foil, collectorNumber, goatbotsPrice, cardhoarderPrice, chg7d, chg30d, low90, ma7, ma30, priceChangeRate30d },
     ...
   ]
 }
@@ -345,7 +384,8 @@ Cube/Commander 向的，情报面判断时要说明"未见近期 Modern/Legacy/S
 verdict 的取值必须是上面枚举里的英文 key（仪表盘 CSS/文案按这几个 key 渲染），不要自己发明新词。
 `versions` 数组直接从 `data/latest_watchlist.json` 里对应卡片的 `versions` 字段取，字段名要转成
 驼峰（`mtgo_id`→`mtgoId`、`goatbotsPrice`/`cardhoarderPrice`/`chg_7d_pct`→`chg7d`、
-`collector_number`→`collectorNumber` 等）。**`collectorNumber` 这个字段必须带上，不要漏**——
+`collector_number`→`collectorNumber`、`price_change_rate_30d`→`priceChangeRate30d` 等）。
+**`collectorNumber` 这个字段必须带上，不要漏**——
 同一个 `set` 代码下经常混着好几种实际印刷（普通版/无边框版/复古边框版等，比如 Exploration 的
 DMR 版就有两种，`set` 都是 "DMR"），光看 set+foil 分不出来，仪表盘就是靠这个字段区分的。
 

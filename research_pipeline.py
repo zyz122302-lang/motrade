@@ -74,7 +74,7 @@ RARITY_CODE = {"Common": 0, "Uncommon": 1, "Rare": 2, "Mythic": 3, "Special": 4}
 FEATURE_COLUMNS = [
     "chg_7d_pct", "chg_30d_pct", "chg_90d_pct",
     "near_90d_low", "near_90d_high", "big_drop_7d", "big_gain_7d",
-    "days_of_history", "ma7", "ma30", "price",
+    "days_of_history", "ma7", "ma30", "liquidity_rate", "price",
     "rarity_code", "foil", "legal_modern", "legal_legacy",
     "usage_modern", "usage_legacy", "set_age_days", "br_event_recent",
 ]
@@ -320,6 +320,7 @@ def _feature_row(ind: dict, price: float, info: dict, extra: dict) -> dict:
         "days_of_history": ind.get("days_of_history", 0),
         "ma7": ind.get("ma7"),
         "ma30": ind.get("ma30"),
+        "liquidity_rate": ind.get("price_change_rate_30d"),
         "price": price,
         "rarity_code": RARITY_CODE.get(info["rarity"], -1),
         "foil": int(info["foil"]),

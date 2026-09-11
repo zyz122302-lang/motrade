@@ -408,6 +408,8 @@
         之后回来看的时候能分清哪些是真的查过。
       </p>
 
+      <div id="spread-stats-box" style="margin-bottom:18px;"></div>
+
       <details open style="margin-bottom:18px;">
         <summary style="cursor:pointer;font-size:13px;font-weight:600;">持仓 <span id="qf-hold-count" class="badge mono" style="color:var(--text-dim);"></span></summary>
         <div id="qf-hold-empty" class="empty-state" hidden>持仓里现在没有卡。</div>
@@ -504,6 +506,7 @@
   var currentDetailReturnView = 'fall';
 
   function fmtTix(n) { return (n === null || n === undefined || isNaN(n)) ? '—' : n.toFixed(2); }
+  function fmtLiquidity(r) { return (r === null || r === undefined || isNaN(r)) ? '—' : Math.round(r * 100) + '%'; }
   function escapeHtml(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -1042,6 +1045,34 @@
     }).join('');
   }
 
+  var RARITY_LABEL_CN = { Common: '普通', Uncommon: '非普通', Rare: '稀有', Mythic: '秘稀' };
+  function renderSpreadStats(doc) {
+    var box = document.getElementById('spread-stats-box');
+    if (!box) return;
+    var overall = doc && doc.overall;
+    if (!doc || !overall || overall.insufficientSample) {
+      var n = overall ? overall.sampleSize : 0;
+      box.innerHTML = '<p class="panel-note" style="margin:0;">价差统计：样本不足（当前 ' + n +
+        ' 条可比对的买价记录，至少需要 5 条才会显示），随着"买价记录"越记越多会自动出现。</p>';
+      return;
+    }
+    var rows = Object.keys(doc.byRarity || {}).map(function (key) {
+      var b = doc.byRarity[key];
+      var label = RARITY_LABEL_CN[key] || key;
+      if (b.insufficientSample) {
+        return '<div class="home-news-item">' + escapeHtml(label) + '：样本不足（' + b.sampleSize + ' 条）</div>';
+      }
+      var nobid = (b.noBidRate != null) ? '，拒收率 ' + Math.round(b.noBidRate * 100) + '%' : '';
+      return '<div class="home-news-item">' + escapeHtml(label) + '：典型价差 ' + b.medianSpreadPct + '%' +
+        '（样本 ' + b.sampleSize + ' 条）' + nobid + '</div>';
+    }).join('');
+    box.innerHTML = '<div class="panel" style="padding:12px 14px;">' +
+      '<div class="home-sub-head" style="margin-top:0;">买卖价差统计（基于你的买价记录，仅供参考）</div>' +
+      '<p class="panel-note" style="margin:0 0 6px;">整体典型价差 ' + overall.medianSpreadPct + '%' +
+      '（样本 ' + overall.sampleSize + ' 条）—— 卖价（观察池显示的那个）打这个折扣，大致就是真的' +
+      '平仓能拿到的钱，跟持仓页的"收价"是同一个概念，这里只是按稀有度汇总统计。</p>' + rows + '</div>';
+  }
+
   // 通用时间序列图表：横轴按实际日期定位（不是按索引均分），底部画日期刻度，
   // 鼠标悬停显示十字线+每条线在那一天的数值——下跌/上涨观察详情页的价格曲线、
   // Treasure Chest 曲线、赛事使用率曲线都复用这一套渲染+交互逻辑。
@@ -1255,6 +1286,7 @@
     document.getElementById('stat-low90').textContent = fmtTix(v.low90);
     document.getElementById('stat-ma7').textContent = fmtTix(v.ma7);
     document.getElementById('stat-ma30').textContent = fmtTix(v.ma30);
+    document.getElementById('stat-liquidity').textContent = fmtLiquidity(v.priceChangeRate30d);
     loadChartFor(mtgoId);
   }
 
@@ -1327,6 +1359,7 @@
       '<div class="tile"><div class="label">90日低点</div><div class="value" id="stat-low90">—</div></div>' +
       '<div class="tile"><div class="label">MA7</div><div class="value" id="stat-ma7">—</div></div>' +
       '<div class="tile"><div class="label">MA30</div><div class="value" id="stat-ma30">—</div></div>' +
+      '<div class="tile"><div class="label">30日换手率</div><div class="value" id="stat-liquidity">—</div></div>' +
       '</div>';
 
     html += '<div class="note-box">' + verdictChip(c.verdict) +
@@ -1357,6 +1390,7 @@
       document.getElementById('stat-low90').textContent = fmtTix(c.low90);
       document.getElementById('stat-ma7').textContent = fmtTix(c.ma7);
       document.getElementById('stat-ma30').textContent = fmtTix(c.ma30);
+      document.getElementById('stat-liquidity').textContent = fmtLiquidity(c.priceChangeRate30d);
       loadChartFor(c.primaryMtgoId);
     }
     if (!c.imageUrl) loadCardArt(primaryId);
@@ -1547,6 +1581,10 @@
       renderObs(buyObsItems);
       renderHoldings();
     }, function () { buyObsItems = []; renderObs([]); renderHoldings(); });
+
+    db.collection('site_meta').doc('spread_stats').onSnapshot(function (snap) {
+      renderSpreadStats(snap.exists ? snap.data() : null);
+    }, function () { renderSpreadStats(null); });
 
     document.getElementById('holding-form').addEventListener('submit', async function (ev) {
       ev.preventDefault();

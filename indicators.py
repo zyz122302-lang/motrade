@@ -57,6 +57,17 @@ def from_history(history: list[tuple[str, float]], current_price: float, as_of: 
     ma7 = round(sum(prices_only[-7:]) / len(prices_only[-7:]), 2) if prices_only else None
     ma30 = round(sum(prices_only[-30:]) / len(prices_only[-30:]), 2) if prices_only else None
 
+    # 换手率代理指标：GoatBots 每天发一次全量卖价快照，一张卡"多久被重新定价一次"本身就是
+    # bot 库存周转/市场关注度的免费信号——不需要额外数据源，纯粹是在已有的每日价格序列上
+    # 多算一个统计量。近30天窗口内价格与前一天不同的天数越多，说明 bot 越频繁调整这张卡的
+    # 报价（换手越快）；长期挂着不变则说明这张卡几乎没人交易，波动样本代表性存疑。
+    window_30 = prices_only[-31:] if len(prices_only) > 1 else prices_only
+    change_days = sum(
+        1 for i in range(1, len(window_30)) if window_30[i] != window_30[i - 1]
+    )
+    days_in_window = max(len(window_30) - 1, 0)
+    price_change_rate_30d = round(change_days / days_in_window, 3) if days_in_window else None
+
     return {
         "chg_7d_pct": chg_7d,
         "chg_30d_pct": pct(p30, current_price),
@@ -70,6 +81,8 @@ def from_history(history: list[tuple[str, float]], current_price: float, as_of: 
         "ma7": ma7,
         "ma30": ma30,
         "days_of_history": len(prices_only),
+        "price_change_days_30d": change_days,
+        "price_change_rate_30d": price_change_rate_30d,
     }
 
 
