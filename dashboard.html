@@ -289,11 +289,16 @@
   <!-- PORTFOLIO VIEW -->
   <section class="view" id="view-portfolio">
     <section class="panel" style="border:none;padding:0;margin-bottom:0;">
-      <p class="panel-note">你的真实持仓记录，只存在这个页面的私有数据库里。</p>
+      <p class="panel-note">
+        你的真实持仓记录，只存在这个页面的私有数据库里。跟 bot 交易买卖两个方向价格不一样——
+        买入付的是卖价，卖出拿到的是收价，中间有价差——所以这里的"最近收价/未实现盈亏"只认
+        "买价记录"里你自己记的收购价，不会拿仪表盘上显示的卖价冒充，没记过收价的卡会显示
+        "暂无收价记录"而不是编一个数字出来。星号（*）表示还有卡没有收价记录，没计入合计。
+      </p>
       <div id="holdings-empty" class="empty-state" hidden>还没有持仓记录，用下面的表单添加第一条。</div>
       <div class="table-wrap">
         <table id="holdings-table" hidden>
-          <thead><tr><th>卡牌</th><th class="num">数量</th><th class="num">成本价</th><th class="num">现价</th><th class="num">未实现盈亏</th><th></th></tr></thead>
+          <thead><tr><th>卡牌</th><th class="num">数量</th><th class="num">成本价</th><th class="num">最近收价</th><th class="num">未实现盈亏</th><th></th></tr></thead>
           <tbody id="holdings-body"></tbody>
         </table>
       </div>
@@ -402,7 +407,7 @@
 <script>
 (function () {
   var db = null;
-  var fallItems = [], riseItems = [], holdingItems = [];
+  var fallItems = [], riseItems = [], holdingItems = [], buyObsItems = [];
   var currentDetailReturnView = 'fall';
 
   function fmtTix(n) { return (n === null || n === undefined || isNaN(n)) ? '—' : n.toFixed(2); }
@@ -439,23 +444,25 @@
     if (btn) btn.classList.add('active');
   }
 
-  function priceForHolding(h) {
+  // 跟 bot 交易：买入付的是 bot 的卖价（ask），卖出拿到的是 bot 的收价（bid）——两个方向
+  // 从来不是同一个数字，中间有价差。所以持仓的"现价/未实现盈亏"必须用**收价**算（如果现在要
+  // 平仓，能拿到手的钱），不能用仪表盘上"下跌观察/上涨观察"显示的那个卖价（那是买入价参考，
+  // 不是卖出能拿到的钱）。而买价这边完全没有自动化数据源（GoatBots 买价故意做了防抓取处理，
+  // 见 docs/PRINCIPLES.md），唯一的收价数据就是"买价记录"里用户自己手动查、手动记的那些——
+  // 所以这里只认 buy_observations 里最近一条匹配的记录，找不到就如实显示"暂无收价记录"，
+  // 绝不会拿卖价顶替着算，那样算出来的盈亏是虚高的，会误导实际的买卖决策。
+  function latestBuyObsFor(h) {
     var needle = (h.name || '').trim().toLowerCase();
-    var all = fallItems.concat(riseItems);
-    var match = all.filter(function (c) { return (c.name || '').trim().toLowerCase() === needle; })[0];
-    if (!match) return null;
-    if (h.set) {
-      var target = h.set.trim();
-      var v = (match.versions || []).filter(function (vv) { return versionLabel(vv) === target; })[0];
-      if (v) {
-        var gb = v.goatbotsPrice, ch = v.cardhoarderPrice;
-        var vp = (gb != null && ch != null) ? Math.min(gb, ch) : (gb != null ? gb : ch);
-        if (vp != null) return vp;
-      }
-      // 没找到完全匹配的版本（比如手打的版本字符串跟系统里的不完全一样），
-      // 退回这张卡的最低价，好过完全不显示
+    var targetSet = (h.set || '').trim().toLowerCase();
+    var candidates = buyObsItems.filter(function (o) { return (o.name || '').trim().toLowerCase() === needle; });
+    if (targetSet) {
+      var exact = candidates.filter(function (o) { return (o.set || '').trim().toLowerCase() === targetSet; });
+      if (exact.length) candidates = exact;
+      // 没有精确匹配这个版本的记录时，退回这张卡名下任意版本最近一条记录，
+      // 好过完全没有参考——但界面上会注明这条记录对应的版本，不会假装是精确匹配
     }
-    return match.bestPrice;
+    if (!candidates.length) return null;
+    return candidates.slice().sort(function (a, b) { return (b.date || '').localeCompare(a.date || ''); })[0];
   }
   var SOURCE_LABEL = { goatbots: 'GoatBots', cardhoarder: 'Cardhoarder' };
 
@@ -507,23 +514,34 @@
       return;
     }
     tbl.hidden = false; empty.hidden = true;
-    var totalPl = 0, anyPriced = false;
+    var totalPl = 0, anyPriced = false, pricedCount = 0;
     body.innerHTML = holdingItems.map(function (h) {
-      var cur = priceForHolding(h);
-      var pl = null;
-      if (cur !== null) { pl = (cur - h.cost) * h.qty; totalPl += pl; anyPriced = true; }
+      var obs = latestBuyObsFor(h);
+      var pl = null, curCell;
+      if (!obs) {
+        curCell = '<span style="color:var(--text-dim);">暂无收价记录</span>';
+      } else if (obs.noBid) {
+        curCell = '<span style="color:var(--text-dim);">暂不收购<span class="mono" style="font-size:10.5px;"> (' + escapeHtml(obs.date || '') + ')</span></span>';
+      } else {
+        pl = (obs.price - h.cost) * h.qty; totalPl += pl; anyPriced = true; pricedCount++;
+        var obsSetNote = h.set && obs.set && obs.set.toLowerCase() !== h.set.toLowerCase()
+          ? '<div class="panel-note" style="margin:1px 0 0;">记录版本：' + escapeHtml(obs.set || '—') + '</div>' : '';
+        curCell = fmtTix(obs.price) + '<div class="panel-note" style="margin:1px 0 0;">' + escapeHtml(obs.date || '') + '</div>' + obsSetNote;
+      }
       var plClass = pl === null ? '' : (pl >= 0 ? 'pl-pos' : 'pl-neg');
       var versionChip = h.set ? h.set : (h.foil ? 'F' : '');
       return '<tr>' +
         '<td class="card-name">' + escapeHtml(h.name) + (versionChip ? '<span class="set-chip">' + escapeHtml(versionChip) + '</span>' : '') + '</td>' +
         '<td class="num mono">' + h.qty + '</td>' +
         '<td class="num price">' + fmtTix(h.cost) + '</td>' +
-        '<td class="num price">' + (cur === null ? '未匹配' : fmtTix(cur)) + '</td>' +
+        '<td class="num price">' + curCell + '</td>' +
         '<td class="num price ' + plClass + '">' + (pl === null ? '—' : (pl >= 0 ? '+' : '') + fmtTix(pl)) + '</td>' +
         '<td><button class="icon-btn" data-del-holding="' + h.id + '" title="删除">&times;</button></td>' +
         '</tr>';
     }).join('');
-    document.getElementById('stat-pl').textContent = anyPriced ? (totalPl >= 0 ? '+' : '') + fmtTix(totalPl) : '—';
+    document.getElementById('stat-pl').textContent = anyPriced
+      ? (totalPl >= 0 ? '+' : '') + fmtTix(totalPl) + (pricedCount < holdingItems.length ? '*' : '')
+      : '—';
   }
 
   function renderNewsStrip(events) {
@@ -1125,13 +1143,15 @@
     }, function () { renderHoldings(); });
 
     db.collection('buy_observations').onSnapshot(function (snap) {
-      renderObs(snap.docs.map(function (d) {
+      buyObsItems = snap.docs.map(function (d) {
         var v = {}; var src = d.data();
         for (var k in src) v[k] = src[k];
         v.id = d.id;
         return v;
-      }));
-    }, function () { renderObs([]); });
+      });
+      renderObs(buyObsItems);
+      renderHoldings();
+    }, function () { buyObsItems = []; renderObs([]); renderHoldings(); });
 
     document.getElementById('holding-form').addEventListener('submit', async function (ev) {
       ev.preventDefault();
