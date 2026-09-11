@@ -235,6 +235,7 @@
     <div class="tile"><div class="label">上涨观察</div><div class="value gold mono" id="stat-rise">—</div></div>
     <div class="tile"><div class="label">当前持仓</div><div class="value mono" id="stat-holdings">—</div></div>
     <div class="tile"><div class="label">未实现盈亏 (TIX)</div><div class="value mono" id="stat-pl">—</div></div>
+    <div class="tile"><div class="label">已实现盈亏 (TIX)</div><div class="value mono" id="stat-realized-pl">—</div></div>
     <div class="tile"><div class="label">数据日期</div><div class="value mono" id="stat-asof">—</div></div>
   </div>
 
@@ -359,6 +360,9 @@
         买入付的是卖价，卖出拿到的是收价，中间有价差——所以这里的"最近收价/未实现盈亏"只认
         "买价记录"里你自己记的收购价，不会拿仪表盘上显示的卖价冒充，没记过收价的卡会显示
         "暂无收价记录"而不是编一个数字出来。星号（*）表示还有卡没有收价记录，没计入合计。
+        点"卖出"填入实际成交的卖出价（bot 收价）和数量，会记一笔已实现盈亏、同时相应减少
+        （或清空）这条持仓的数量——这是你实际卖出到手的钱，跟上面按"买价记录"估算的
+        未实现盈亏是两回事。
       </p>
       <div id="holdings-empty" class="empty-state" hidden>还没有持仓记录，用下面的表单添加第一条。</div>
       <div class="table-wrap">
@@ -375,6 +379,16 @@
         <button type="submit">添加持仓</button>
         <div class="form-msg full" id="holding-msg"></div>
       </form>
+
+      <h3 style="font-size:15px;margin:22px 0 8px;">已实现交易记录</h3>
+      <p class="panel-note" style="margin:0 0 10px;">每笔卖出的真实成交记录，累计已实现盈亏见上方总览栏。</p>
+      <div id="realized-empty" class="empty-state" hidden>还没有卖出记录。</div>
+      <div class="table-wrap">
+        <table id="realized-table" hidden>
+          <thead><tr><th>卡牌</th><th class="num">数量</th><th class="num">成本价</th><th class="num">卖出价</th><th class="num">已实现盈亏</th><th>日期</th><th></th></tr></thead>
+          <tbody id="realized-body"></tbody>
+        </table>
+      </div>
     </section>
   </section>
 
@@ -476,7 +490,8 @@
 <script>
 (function () {
   var db = null;
-  var fallItems = [], riseItems = [], holdingItems = [], buyObsItems = [];
+  var fallItems = [], riseItems = [], holdingItems = [], buyObsItems = [], realizedTradeItems = [];
+  var sellingHoldingId = null;
   var currentDetailReturnView = 'fall';
 
   function fmtTix(n) { return (n === null || n === undefined || isNaN(n)) ? '—' : n.toFixed(2); }
@@ -599,18 +614,63 @@
       }
       var plClass = pl === null ? '' : (pl >= 0 ? 'pl-pos' : 'pl-neg');
       var versionChip = h.set ? h.set : (h.foil ? 'F' : '');
-      return '<tr>' +
+      var row = '<tr>' +
         '<td class="card-name">' + escapeHtml(h.name) + (versionChip ? '<span class="set-chip">' + escapeHtml(versionChip) + '</span>' : '') + '</td>' +
         '<td class="num mono">' + h.qty + '</td>' +
         '<td class="num price">' + fmtTix(h.cost) + '</td>' +
         '<td class="num price">' + curCell + '</td>' +
         '<td class="num price ' + plClass + '">' + (pl === null ? '—' : (pl >= 0 ? '+' : '') + fmtTix(pl)) + '</td>' +
-        '<td><button class="icon-btn" data-del-holding="' + h.id + '" title="删除">&times;</button></td>' +
+        '<td style="white-space:nowrap;">' +
+        '<button class="icon-btn" data-sell-holding="' + h.id + '" title="卖出" style="font-size:12px;padding:2px 8px;">卖出</button>' +
+        '<button class="icon-btn" data-del-holding="' + h.id + '" title="删除">&times;</button>' +
+        '</td>' +
         '</tr>';
+      if (sellingHoldingId === h.id) {
+        row += '<tr class="sell-row" data-sell-form-for="' + h.id + '"><td colspan="6" style="padding:10px 8px;background:var(--paper);">' +
+          '<div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;">' +
+          '<div><label style="display:block;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-dim);margin-bottom:4px;">卖出数量</label>' +
+          '<input type="number" class="sell-qty" min="1" max="' + h.qty + '" step="1" value="' + h.qty + '" style="width:80px;background:var(--paper-raise);border:1px solid var(--line);border-radius:6px;padding:6px 8px;font-size:13px;color:var(--text);" /></div>' +
+          '<div><label style="display:block;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-dim);margin-bottom:4px;">卖出价 (TIX/张，bot 收价)</label>' +
+          '<input type="number" class="sell-price" min="0" step="0.01" style="width:110px;background:var(--paper-raise);border:1px solid var(--line);border-radius:6px;padding:6px 8px;font-size:13px;color:var(--text);" /></div>' +
+          '<button type="button" data-confirm-sell="' + h.id + '" style="background:var(--gold);color:#1c1305;border:none;border-radius:6px;padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer;">确认卖出</button>' +
+          '<button type="button" data-cancel-sell style="background:none;border:1px solid var(--line);border-radius:6px;padding:8px 14px;font-size:13px;color:var(--text-dim);cursor:pointer;">取消</button>' +
+          '<div class="form-msg" id="sell-msg-' + h.id + '"></div>' +
+          '</div></td></tr>';
+      }
+      return row;
     }).join('');
     document.getElementById('stat-pl').textContent = anyPriced
       ? (totalPl >= 0 ? '+' : '') + fmtTix(totalPl) + (pricedCount < holdingItems.length ? '*' : '')
       : '—';
+  }
+
+  function renderRealizedTrades() {
+    var tbl = document.getElementById('realized-table');
+    var empty = document.getElementById('realized-empty');
+    var body = document.getElementById('realized-body');
+    if (!realizedTradeItems.length) {
+      tbl.hidden = true; empty.hidden = false;
+      document.getElementById('stat-realized-pl').textContent = '—';
+      return;
+    }
+    tbl.hidden = false; empty.hidden = true;
+    var total = 0;
+    var sorted = realizedTradeItems.slice().sort(function (a, b) { return (b.sellDate || '').localeCompare(a.sellDate || ''); });
+    body.innerHTML = sorted.map(function (t) {
+      total += t.realizedPl || 0;
+      var plClass = (t.realizedPl || 0) >= 0 ? 'pl-pos' : 'pl-neg';
+      var versionChip = t.set ? '<span class="set-chip">' + escapeHtml(t.set) + '</span>' : '';
+      return '<tr>' +
+        '<td class="card-name">' + escapeHtml(t.name) + versionChip + '</td>' +
+        '<td class="num mono">' + t.qty + '</td>' +
+        '<td class="num price">' + fmtTix(t.cost) + '</td>' +
+        '<td class="num price">' + fmtTix(t.sellPrice) + '</td>' +
+        '<td class="num price ' + plClass + '">' + (t.realizedPl >= 0 ? '+' : '') + fmtTix(t.realizedPl) + '</td>' +
+        '<td class="mono">' + escapeHtml(t.sellDate || '') + '</td>' +
+        '<td><button class="icon-btn" data-del-realized="' + t.id + '" title="删除">&times;</button></td>' +
+        '</tr>';
+    }).join('');
+    document.getElementById('stat-realized-pl').textContent = (total >= 0 ? '+' : '') + fmtTix(total);
   }
 
   var NEWS_TYPE_LABEL = { banned_restricted: '禁限公告', supply_open: '供给动态', mtgo_news: 'MTGO动态' };
@@ -1326,6 +1386,16 @@
       renderAllQuickfillSections();
     }, function () { renderHoldings(); });
 
+    db.collection('realized_trades').onSnapshot(function (snap) {
+      realizedTradeItems = snap.docs.map(function (d) {
+        var v = {}; var src = d.data();
+        for (var k in src) v[k] = src[k];
+        v.id = d.id;
+        return v;
+      });
+      renderRealizedTrades();
+    }, function () { realizedTradeItems = []; renderRealizedTrades(); });
+
     db.collection('buy_observations').onSnapshot(function (snap) {
       buyObsItems = snap.docs.map(function (d) {
         var v = {}; var src = d.data();
@@ -1412,9 +1482,52 @@
     });
 
     document.getElementById('holdings-body').addEventListener('click', async function (ev) {
-      var id = ev.target.getAttribute('data-del-holding');
+      var delId = ev.target.getAttribute('data-del-holding');
+      if (delId) { await db.collection('portfolio').doc(delId).delete(); return; }
+
+      var sellId = ev.target.getAttribute('data-sell-holding');
+      if (sellId) { sellingHoldingId = sellId; renderHoldings(); return; }
+
+      if (ev.target.hasAttribute('data-cancel-sell')) { sellingHoldingId = null; renderHoldings(); return; }
+
+      var confirmId = ev.target.getAttribute('data-confirm-sell');
+      if (confirmId) {
+        var h = holdingItems.filter(function (x) { return x.id === confirmId; })[0];
+        if (!h) return;
+        var row = ev.target.closest('tr');
+        var qty = parseFloat(row.querySelector('.sell-qty').value);
+        var sellPrice = parseFloat(row.querySelector('.sell-price').value);
+        var msg = document.getElementById('sell-msg-' + confirmId);
+        if (!qty || qty <= 0 || qty > h.qty || isNaN(sellPrice)) {
+          if (msg) { msg.textContent = '请填写正确的数量（不超过持仓）和卖出价'; msg.className = 'form-msg err'; }
+          return;
+        }
+        ev.target.disabled = true;
+        if (msg) { msg.textContent = '保存中…'; msg.className = 'form-msg'; }
+        try {
+          var realizedPl = (sellPrice - h.cost) * qty;
+          await db.collection('realized_trades').add({
+            name: h.name, set: h.set || '', qty: qty, cost: h.cost,
+            sellPrice: sellPrice, realizedPl: realizedPl, sellDate: todayStr(),
+          });
+          if (qty >= h.qty) {
+            await db.collection('portfolio').doc(confirmId).delete();
+          } else {
+            await db.collection('portfolio').doc(confirmId).update({ qty: h.qty - qty });
+          }
+          sellingHoldingId = null;
+          renderHoldings();
+        } catch (e) {
+          if (msg) { msg.textContent = '保存失败: ' + (e && e.message ? e.message : '未知错误'); msg.className = 'form-msg err'; }
+          ev.target.disabled = false;
+        }
+      }
+    });
+
+    document.getElementById('realized-body').addEventListener('click', async function (ev) {
+      var id = ev.target.getAttribute('data-del-realized');
       if (!id) return;
-      await db.collection('portfolio').doc(id).delete();
+      await db.collection('realized_trades').doc(id).delete();
     });
 
     document.getElementById('obs-body').addEventListener('click', async function (ev) {
