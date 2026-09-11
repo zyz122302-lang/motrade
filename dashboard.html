@@ -66,7 +66,7 @@
     font-size: 10.5px; color: var(--text-dim);
   }
 
-  .fmt-filter { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
+  .fmt-filter, .win-filter { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
   .fmt-btn {
     background: var(--paper-raise); border: 1px solid var(--line); border-radius: 20px;
     color: var(--text-dim); font-size: 12px; padding: 5px 13px; cursor: pointer;
@@ -352,15 +352,22 @@
     <section class="panel" style="border:none;padding:0;margin-bottom:0;">
       <p class="panel-note">
         每周离线跑一次的探索性研究，不是每日流程的一部分，也不直接决定仪表盘上的研判结论——
-        用 GoatBots 两年历史卖价回溯构造"出现某个信号后14天价格是否真的涨了8%以上"的训练样本，
-        训练一个 LightGBM 模型，看数据本身能校准出什么，跟
+        用 GoatBots 两年历史卖价回溯构造"出现某个信号后 7/14/30 天价格是否真的涨了8%以上"的
+        训练样本，同时训练三个预测窗口的 LightGBM 模型，特征除了价格历史，还有赛制使用率、
+        官方禁限事件、系列发售时间（数据驱动近似值），跟
         <code>strategies/supply_vs_demand_framework.yaml</code> 里写的人工规则互相印证。
-        样本量有限、模型也不知道禁限公告/新闻这类情报面信息，<strong>预测概率仅供参考，
-        不是交易建议</strong>。
+        使用率/禁限事件这两类特征才刚开始积累历史，覆盖率会随时间推移自然提高——下面的
+        "特征覆盖率"如实显示当前状态。<strong>预测概率仅供参考，不是交易建议</strong>。
       </p>
       <div id="research-empty" class="empty-state" hidden>还没有研究结果，等每周研究任务跑一次。</div>
       <div id="research-body" hidden>
-        <div class="ledger" id="research-ledger" style="margin-bottom:20px;"></div>
+        <div class="win-filter" id="research-window-filter">
+          <button class="fmt-btn" data-window="7">7天窗口</button>
+          <button class="fmt-btn active" data-window="14">14天窗口</button>
+          <button class="fmt-btn" data-window="30">30天窗口</button>
+        </div>
+        <div class="ledger" id="research-ledger" style="margin-bottom:16px;"></div>
+        <p class="panel-note" id="research-coverage" style="margin-bottom:18px;"></p>
         <h3 style="font-size:15px;margin-bottom:8px;">特征重要性（模型认为哪些指标最能预测反弹）</h3>
         <div id="research-importance" style="margin-bottom:22px;"></div>
         <h3 style="font-size:15px;margin-bottom:8px;">本周模型评分最高的候选（预测反弹概率降序）</h3>
@@ -525,9 +532,14 @@
     big_drop_7d: '7日大跌标记', big_gain_7d: '7日大涨标记',
     days_of_history: '历史天数', ma7: '7日均价', ma30: '30日均价', price: '现价',
     rarity_code: '稀有度', foil: '是否Foil', legal_modern: '摩登合法', legal_legacy: '薪传合法',
+    usage_modern: '摩登使用率', usage_legacy: '薪传使用率',
+    set_age_days: '系列上线天数(推算)', br_event_recent: '近30日禁限变动',
   };
+  var currentResearchRun = null;
+  var currentResearchWindow = '14';
 
   function renderResearch(run) {
+    currentResearchRun = run;
     var empty = document.getElementById('research-empty');
     var body = document.getElementById('research-body');
     if (!run || run.status !== 'ok') {
@@ -536,16 +548,36 @@
       return;
     }
     empty.hidden = true; body.hidden = false;
+    renderResearchWindow(currentResearchWindow);
+  }
+
+  function renderResearchWindow(windowKey) {
+    var run = currentResearchRun;
+    if (!run || !run.windows) return;
+    var w = run.windows[windowKey];
+    if (!w) return;
+    currentResearchWindow = windowKey;
+    document.querySelectorAll('#research-window-filter .fmt-btn').forEach(function (b) {
+      b.classList.toggle('active', b.getAttribute('data-window') === windowKey);
+    });
 
     document.getElementById('research-ledger').innerHTML =
       '<div class="tile"><div class="label">训练日期</div><div class="value mono">' + escapeHtml(run.runDate || '—') + '</div></div>' +
-      '<div class="tile"><div class="label">训练/验证样本</div><div class="value mono">' + (run.trainRows || 0) + ' / ' + (run.validRows || 0) + '</div></div>' +
-      '<div class="tile"><div class="label">验证集准确率</div><div class="value gold mono">' + fmtPct(run.validAccuracy) + '</div></div>' +
-      '<div class="tile"><div class="label">基线准确率</div><div class="value mono">' + fmtPct(run.baselineAccuracy) + '</div></div>' +
-      '<div class="tile"><div class="label">AUC</div><div class="value mono">' + (run.validAuc == null ? '—' : run.validAuc) + '</div></div>' +
-      '<div class="tile"><div class="label">预测窗口</div><div class="value mono">' + (run.lookaheadDays || '—') + ' 天涨' + fmtPct(run.reboundThreshold) + '</div></div>';
+      '<div class="tile"><div class="label">训练/验证样本</div><div class="value mono">' + (w.trainRows || 0) + ' / ' + (w.validRows || 0) + '</div></div>' +
+      '<div class="tile"><div class="label">验证集准确率</div><div class="value gold mono">' + fmtPct(w.validAccuracy) + '</div></div>' +
+      '<div class="tile"><div class="label">基线准确率</div><div class="value mono">' + fmtPct(w.baselineAccuracy) + '</div></div>' +
+      '<div class="tile"><div class="label">AUC</div><div class="value mono">' + (w.validAuc == null ? '—' : w.validAuc) + '</div></div>' +
+      '<div class="tile"><div class="label">预测窗口</div><div class="value mono">' + windowKey + ' 天涨' + fmtPct(run.reboundThreshold) + '</div></div>';
 
-    var imp = run.featureImportance || [];
+    var cov = run.featureCoverage || {};
+    var covBits = ['usage_modern', 'usage_legacy', 'br_event_recent', 'set_age_days'].map(function (k) {
+      return (FEATURE_LABEL[k] || k) + ' ' + fmtPct(cov[k]);
+    });
+    document.getElementById('research-coverage').textContent =
+      '特征覆盖率（训练样本里有真实值、不是缺失的比例）：' + covBits.join(' · ') +
+      '——使用率/禁限事件才刚开始积累，覆盖率低是预期内的，会随时间推移变高。';
+
+    var imp = w.featureImportance || [];
     var maxImp = imp.length ? Math.max.apply(null, imp.map(function (f) { return f.importance; })) : 1;
     document.getElementById('research-importance').innerHTML = imp.map(function (f) {
       var pct = maxImp ? Math.round((f.importance / maxImp) * 100) : 0;
@@ -554,7 +586,7 @@
         '<div class="imp-value">' + f.importance + '</div></div>';
     }).join('') || '<p class="panel-note">无数据</p>';
 
-    var cands = run.topCandidates || [];
+    var cands = w.topCandidates || [];
     document.getElementById('research-table-body').innerHTML = cands.map(function (r) {
       return '<tr><td class="card-name">' + escapeHtml(r.name) + '</td>' +
         '<td class="num price">' + fmtTix(r.price) + '</td>' +
@@ -742,6 +774,10 @@
           renderList(viewKey + '-body', viewKey === 'fall' ? fallItems : riseItems, viewKey);
         });
       });
+    });
+
+    document.querySelectorAll('#research-window-filter .fmt-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () { renderResearchWindow(btn.getAttribute('data-window')); });
     });
 
     if (!window.claude || !window.claude.use) { renderList('fall-body', [], 'fall'); renderList('rise-body', [], 'rise'); return; }

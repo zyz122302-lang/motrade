@@ -1,6 +1,7 @@
 """每周研究流水线：用 GoatBots 历史卖价回溯构造"当前特征出现后 N 天价格是否真的
-反弹"的训练样本，训练一个 LightGBM 二分类模型，按时间切分做验证（不是随机切分，
-避免未来数据泄露到训练集），再把训练好的模型套到当前候选池上打分。
+反弹"的训练样本，训练 LightGBM 二分类模型（同时训练 7/14/30 天三个预测窗口），
+按时间切分做验证（不是随机切分，避免未来数据泄露到训练集），再把训练好的模型
+套到当前候选池上打分。
 
 目的是**校准**已经写进 strategies/*.yaml 的人工规则（尤其是
 supply_vs_demand_framework.yaml 里"跌势放缓不等于会反弹"这条），不是替代它、
@@ -8,7 +9,21 @@ supply_vs_demand_framework.yaml 里"跌势放缓不等于会反弹"这条），�
 每周跑一次就够了。产出写到 data/research_output.json，供每周 routine 读取后
 写进仪表盘数据库的 research_runs 集合。
 
-运行方式：python research_pipeline.py
+特征除了价格历史指标，还包括赛制使用率、官方禁限公告事件、系列发售时间这三类——
+**但这三类数据都是最近才开始积累的（使用率/禁限监控大约从 2026-09 才开始有真实
+快照），两年的回溯训练集里绝大多数历史锚点在这几个特征上会是缺失值（LightGBM
+原生支持缺失值，不需要插补，也不会报错），只有最近这一两周的锚点才有真实取值。
+这不是 bug，是数据积累时间不够长的真实反映——`dataCoverage` 字段会如实报告每个
+特征的非缺失覆盖率，随着每周持续跑、历史数据不断累积，覆盖率会自然提高，不需要
+每次都重新设计特征。
+
+运行方式：
+    先跑 pipeline.py 同款的"赛事使用率桥接"步骤，把 metagame_usage 集合读回本地写成
+    data/metagame_import.json（结构见 storage.import_metagame_usage_snapshot）；
+    再把 news_events 集合整体读回写成 data/br_events_import.json（结构：
+    [{date, format, added: [...], removed: [...]}, ...]，两个字段都没有的话跳过）；
+    两个文件都是可选的——不存在就跳过对应特征，不影响其他部分。
+    然后：python research_pipeline.py
 """
 
 import json
@@ -24,13 +39,19 @@ from config import DATA_DIR
 from fetchers import goatbots_fetcher, scryfall_fetcher
 
 OUTPUT_PATH = DATA_DIR / "research_output.json"
+METAGAME_IMPORT_PATH = DATA_DIR / "metagame_import.json"
+BR_EVENTS_IMPORT_PATH = DATA_DIR / "br_events_import.json"
 
-LOOKAHEAD_DAYS = 14          # 预测"这之后14天"会不会反弹
-REBOUND_THRESHOLD = 0.08     # 涨幅 >= 8% 算反弹（正类）
-ANCHOR_STRIDE_DAYS = 10      # 同一张卡每隔多少天取一个训练锚点，减少高度自相关的样本
-MIN_HISTORY_FOR_ANCHOR = 35  # 锚点之前至少要有这么多天历史才够算 chg_30d 等特征
-MAX_CANDIDATE_NAMES = 1200   # 训练用的卡名上限（按今日价格从高到低截取，价格太低的卡噪声大）
-VALID_FRACTION = 0.2         # 按锚点日期切分，最近这一部分比例做验证集（不是随机切分）
+LOOKAHEAD_WINDOWS = [7, 14, 30]   # 同时训练这几个预测窗口（天）
+REBOUND_THRESHOLD = 0.08          # 涨幅 >= 8% 算反弹（正类），三个窗口用同一个阈值——
+                                   # 注意这意味着窗口越长，达到阈值天然越容易，
+                                   # 三个窗口的正类比例不可直接比较"预测难度"，
+                                   # 只能比较各自窗口内 模型 vs 基线 的相对提升
+ANCHOR_STRIDE_DAYS = 10           # 同一张卡每隔多少天取一个训练锚点
+MIN_HISTORY_FOR_ANCHOR = 35       # 锚点之前至少要有这么多天历史才够算 chg_30d 等特征
+MAX_CANDIDATE_NAMES = 1200        # 训练用的卡名上限（按今日价格从高到低截取）
+VALID_FRACTION = 0.2              # 按锚点日期切分，最近这一部分比例做验证集
+BR_EVENT_WINDOW_DAYS = 30         # "最近N天内有没有禁限变动"这个特征的回看窗口
 
 RARITY_CODE = {"Common": 0, "Uncommon": 1, "Rare": 2, "Mythic": 3, "Special": 4}
 
@@ -39,7 +60,130 @@ FEATURE_COLUMNS = [
     "near_90d_low", "near_90d_high", "big_drop_7d", "big_gain_7d",
     "days_of_history", "ma7", "ma30", "price",
     "rarity_code", "foil", "legal_modern", "legal_legacy",
+    "usage_modern", "usage_legacy", "set_age_days", "br_event_recent",
 ]
+
+
+def import_metagame_usage_if_present(conn):
+    if not METAGAME_IMPORT_PATH.exists():
+        print("[metagame] no metagame_import.json found, usage_* 特征全部缺失")
+        return
+    snapshot = json.loads(METAGAME_IMPORT_PATH.read_text(encoding="utf-8"))
+    n = storage.import_metagame_usage_snapshot(conn, snapshot)
+    print(f"[metagame] imported {n} rows from metagame_import.json")
+
+
+def load_br_events() -> list[dict]:
+    if not BR_EVENTS_IMPORT_PATH.exists():
+        print("[br_events] no br_events_import.json found, br_event_recent 特征全部为0")
+        return []
+    events = json.loads(BR_EVENTS_IMPORT_PATH.read_text(encoding="utf-8"))
+    print(f"[br_events] loaded {len(events)} historical banned/restricted change events")
+    return events
+
+
+def build_br_index(events: list[dict]) -> dict:
+    """{card_name: [(date_str, direction), ...]}，direction 是 'added'（新增禁限，利空）
+    或 'removed'（解除，利好），按日期升序。"""
+    idx: dict = {}
+    for ev in events:
+        d = ev.get("date")
+        if not d:
+            continue
+        for name in ev.get("added") or []:
+            idx.setdefault(name, []).append((d, "added"))
+        for name in ev.get("removed") or []:
+            idx.setdefault(name, []).append((d, "removed"))
+    for name in idx:
+        idx[name].sort()
+    return idx
+
+
+def br_event_recent(idx: dict, name: str, as_of_str: str) -> int:
+    """名字是否在 as_of 之前 BR_EVENT_WINDOW_DAYS 天内出现过禁限变动。返回 0/1，
+    不区分利空利好方向——"最近有没有变动"本身就是一个值得模型知道的信号，
+    方向性影响已经体现在标签（价格实际涨跌）里了，不需要在特征里重复编码。"""
+    events = idx.get(name)
+    if not events:
+        return 0
+    as_of = date.fromisoformat(as_of_str)
+    cutoff = (as_of - timedelta(days=BR_EVENT_WINDOW_DAYS)).isoformat()
+    for d, _direction in events:
+        if cutoff <= d <= as_of_str:
+            return 1
+        if d > as_of_str:
+            break
+    return 0
+
+
+def build_usage_index(conn, names: list[str]) -> dict:
+    """{name: {"modern": [(week_of, play_rate), ...], "legacy": [...]}}，升序。
+    一次性把每张卡的使用率序列查出来缓存住，避免几万个锚点重复查数据库。"""
+    idx = {}
+    for name in names:
+        idx[name] = {
+            fmt: storage.metagame_usage_trend(conn, name, fmt, limit_weeks=500)
+            for fmt in ("modern", "legacy")
+        }
+    return idx
+
+
+def usage_as_of(idx: dict, name: str, fmt: str, as_of_str: str):
+    trend = (idx.get(name) or {}).get(fmt) or []
+    val = None
+    for week_of, rate in trend:
+        if week_of <= as_of_str:
+            val = rate
+        else:
+            break
+    return val
+
+
+def build_set_first_seen(conn) -> dict:
+    """{cardset: earliest_date_str}——某个系列里，任意一个被本地追踪的印刷版本
+    第一次在 daily_prices 里出现价格记录的日期，作为"这个系列大概什么时候上线
+    MTGO"的数据驱动代理指标（不额外抓取任何新数据源，只是换个角度用已有数据）。"""
+    rows = conn.execute(
+        """SELECT c.cardset, MIN(dp.date) FROM daily_prices dp
+           JOIN cards c ON c.mtgo_id = dp.mtgo_id
+           WHERE c.cardset IS NOT NULL AND c.cardset != ''
+           GROUP BY c.cardset"""
+    ).fetchall()
+    return {cardset: d for cardset, d in rows if d}
+
+
+def select_research_universe(conn, today_prices: dict) -> list[dict]:
+    """返回 [{mtgo_id, name, rarity, foil, cardset, legal_modern, legal_legacy,
+    today_price}, ...]，每个卡名只取今日 GoatBots 价最低的那个版本，按今日价格
+    从高到低截断到 MAX_CANDIDATE_NAMES 张。"""
+    candidate_names = watchlist_builder.build_candidate_names(conn, today_prices)
+    versions_map = watchlist_builder.versions_by_name(conn, candidate_names)
+    cards, legality = watchlist_builder.load_cards_and_legality(conn)
+
+    universe = []
+    for name, versions in versions_map.items():
+        priced = [
+            (v, today_prices.get(str(v["mtgo_id"])))
+            for v in versions
+            if today_prices.get(str(v["mtgo_id"])) is not None
+        ]
+        if not priced:
+            continue
+        cheapest_version, cheapest_price = min(priced, key=lambda vp: vp[1])
+        leg = legality.get(name.lower(), {"modern": False, "legacy": False})
+        universe.append({
+            "mtgo_id": cheapest_version["mtgo_id"],
+            "name": name,
+            "rarity": cheapest_version["rarity"],
+            "foil": bool(cheapest_version["foil"]),
+            "cardset": cheapest_version["set"],
+            "legal_modern": bool(leg.get("modern", False)),
+            "legal_legacy": bool(leg.get("legacy", False)),
+            "today_price": cheapest_price,
+        })
+
+    universe.sort(key=lambda u: -u["today_price"])
+    return universe[:MAX_CANDIDATE_NAMES]
 
 
 def bootstrap_multi_year_history(conn, version_ids):
@@ -60,43 +204,7 @@ def bootstrap_multi_year_history(conn, version_ids):
             print(f"[bootstrap] {year} unavailable ({e}), skipping that year")
 
 
-def select_research_universe(conn, today_prices: dict) -> list[dict]:
-    """返回 [{mtgo_id, name, rarity, foil, legal_modern, legal_legacy, today_price}, ...]，
-    每个卡名只取今日 GoatBots 价最低的那个版本（历史价格序列只有 GoatBots 数据，
-    Cardhoarder 价格不在 daily_prices 里逐日存档），按今日价格从高到低截断到
-    MAX_CANDIDATE_NAMES 张——太便宜的卡百分比指标噪声太大，且大多是散件，价值有限。
-    """
-    candidate_names = watchlist_builder.build_candidate_names(conn, today_prices)
-    versions_map = watchlist_builder.versions_by_name(conn, candidate_names)
-
-    cards, legality = watchlist_builder.load_cards_and_legality(conn)
-
-    universe = []
-    for name, versions in versions_map.items():
-        priced = [
-            (v, today_prices.get(str(v["mtgo_id"])))
-            for v in versions
-            if today_prices.get(str(v["mtgo_id"])) is not None
-        ]
-        if not priced:
-            continue
-        cheapest_version, cheapest_price = min(priced, key=lambda vp: vp[1])
-        leg = legality.get(name.lower(), {"modern": False, "legacy": False})
-        universe.append({
-            "mtgo_id": cheapest_version["mtgo_id"],
-            "name": name,
-            "rarity": cheapest_version["rarity"],
-            "foil": bool(cheapest_version["foil"]),
-            "legal_modern": bool(leg.get("modern", False)),
-            "legal_legacy": bool(leg.get("legacy", False)),
-            "today_price": cheapest_price,
-        })
-
-    universe.sort(key=lambda u: -u["today_price"])
-    return universe[:MAX_CANDIDATE_NAMES]
-
-
-def _feature_row(ind: dict, price: float, info: dict) -> dict:
+def _feature_row(ind: dict, price: float, info: dict, extra: dict) -> dict:
     return {
         "chg_7d_pct": ind.get("chg_7d_pct"),
         "chg_30d_pct": ind.get("chg_30d_pct"),
@@ -113,96 +221,120 @@ def _feature_row(ind: dict, price: float, info: dict) -> dict:
         "foil": int(info["foil"]),
         "legal_modern": int(info["legal_modern"]),
         "legal_legacy": int(info["legal_legacy"]),
+        "usage_modern": extra.get("usage_modern"),
+        "usage_legacy": extra.get("usage_legacy"),
+        "set_age_days": extra.get("set_age_days"),
+        "br_event_recent": extra.get("br_event_recent", 0),
     }
 
 
-def build_dataset(conn, universe: list[dict]):
-    """回溯遍历每张卡的历史价格序列，每隔 ANCHOR_STRIDE_DAYS 天取一个锚点，用锚点
-    当天及之前的历史算特征（复用 indicators.from_history，纯内存计算，不重复查库），
-    用锚点之后 LOOKAHEAD_DAYS 天的价格算标签。返回 (rows, labels, anchor_dates)。
+def build_dataset(conn, universe: list[dict], usage_idx: dict, br_idx: dict, set_first_seen: dict):
+    """回溯遍历每张卡的历史价格序列，每隔 ANCHOR_STRIDE_DAYS 天取一个锚点。
+    返回 (rows, labels_by_window, anchor_dates)，labels_by_window 是
+    {window_days: [0/1, ...]}，跟 rows/anchor_dates 一一对应（同一组锚点，
+    只是标签窗口不同，方便三个窗口共用同一份特征矩阵）。
     """
-    rows, labels, anchor_dates = [], [], []
+    max_window = max(LOOKAHEAD_WINDOWS)
+    rows, anchor_dates = [], []
+    labels_by_window = {w: [] for w in LOOKAHEAD_WINDOWS}
+
     for info in universe:
         mid = info["mtgo_id"]
+        name = info["name"]
+        cardset = info["cardset"]
+        set_seen = set_first_seen.get(cardset)
         history = storage.price_history_for(conn, mid, limit_days=800)
         n = len(history)
-        if n < MIN_HISTORY_FOR_ANCHOR + LOOKAHEAD_DAYS:
+        if n < MIN_HISTORY_FOR_ANCHOR + max_window:
             continue
         dates = [d for d, _ in history]
         prices = [p for _, p in history]
-        for i in range(MIN_HISTORY_FOR_ANCHOR, n - LOOKAHEAD_DAYS, ANCHOR_STRIDE_DAYS):
+
+        for i in range(MIN_HISTORY_FOR_ANCHOR, n - max_window, ANCHOR_STRIDE_DAYS):
             anchor_price = prices[i]
             if not anchor_price or anchor_price <= 0:
                 continue
-            future_price = prices[i + LOOKAHEAD_DAYS]
-            if future_price is None:
+            anchor_date_str = dates[i]
+            future_prices = {w: prices[i + w] for w in LOOKAHEAD_WINDOWS if i + w < n}
+            if len(future_prices) < len(LOOKAHEAD_WINDOWS):
                 continue
-            as_of = date.fromisoformat(dates[i])
+
+            as_of = date.fromisoformat(anchor_date_str)
             ind = indicators.from_history(history[: i + 1], anchor_price, as_of)
-            rows.append(_feature_row(ind, anchor_price, info))
-            labels.append(1 if future_price >= anchor_price * (1 + REBOUND_THRESHOLD) else 0)
-            anchor_dates.append(dates[i])
-    return rows, labels, anchor_dates
+            extra = {
+                "usage_modern": usage_as_of(usage_idx, name, "modern", anchor_date_str),
+                "usage_legacy": usage_as_of(usage_idx, name, "legacy", anchor_date_str),
+                "set_age_days": (as_of - date.fromisoformat(set_seen)).days if set_seen else None,
+                "br_event_recent": br_event_recent(br_idx, name, anchor_date_str),
+            }
+            rows.append(_feature_row(ind, anchor_price, info, extra))
+            anchor_dates.append(anchor_date_str)
+            for w in LOOKAHEAD_WINDOWS:
+                labels_by_window[w].append(1 if future_prices[w] >= anchor_price * (1 + REBOUND_THRESHOLD) else 0)
+
+    return rows, labels_by_window, anchor_dates
 
 
-def _to_matrix(rows: list[dict]):
-    """LightGBM 的 Dataset 只吃 ndarray（或者它自己的 Sequence 包装），不接受带 None
-    的普通 Python 列表；转成 float64 数组，None 变成 np.nan（LightGBM 原生支持 NaN，
-    会自动学出缺失值的最优分裂方向，不需要我们自己插补）。"""
+def _to_matrix(rows: list[dict]) -> np.ndarray:
+    """LightGBM 的 Dataset 只吃 ndarray，不接受带 None 的普通 Python 列表；
+    转成 float64 数组，None 变成 np.nan（LightGBM 原生支持 NaN 分裂，不需要插补）。"""
     return np.array(
         [[np.nan if r[col] is None else r[col] for col in FEATURE_COLUMNS] for r in rows],
         dtype=np.float64,
     )
 
 
-def _auc(y_true: list[int], y_score: list[float]):
+def _coverage(rows: list[dict]) -> dict:
+    """报告每个特征的非缺失覆盖率，尤其是 usage_modern/usage_legacy/br_event_recent/
+    set_age_days 这几个刚开始积累的特征——如实告诉用户现在覆盖率有多低。"""
+    n = len(rows) or 1
+    return {
+        col: round(sum(1 for r in rows if r[col] is not None) / n, 4)
+        for col in FEATURE_COLUMNS
+    }
+
+
+def _auc(y_true: list[int], y_score) -> float | None:
     n_pos = sum(y_true)
     n_neg = len(y_true) - n_pos
     if n_pos == 0 or n_neg == 0:
         return None
+    y_score = list(y_score)
     ranked = sorted(range(len(y_score)), key=lambda i: y_score[i])
     ranks = [0] * len(y_score)
     for rank, idx in enumerate(ranked, start=1):
         ranks[idx] = rank
     rank_sum_pos = sum(ranks[i] for i in range(len(y_true)) if y_true[i] == 1)
-    auc = (rank_sum_pos - n_pos * (n_pos + 1) / 2) / (n_pos * n_neg)
-    return round(auc, 4)
+    return round((rank_sum_pos - n_pos * (n_pos + 1) / 2) / (n_pos * n_neg), 4)
 
 
-def train_and_evaluate(rows, labels, anchor_dates):
-    order = sorted(range(len(rows)), key=lambda i: anchor_dates[i])
-    rows = [rows[i] for i in order]
-    labels = [labels[i] for i in order]
-    anchor_dates = [anchor_dates[i] for i in order]
+def train_one_window(X: np.ndarray, y: list[int], anchor_dates: list[str]):
+    order = sorted(range(len(y)), key=lambda i: anchor_dates[i])
+    X = X[order]
+    y = [y[i] for i in order]
+    sorted_dates = [anchor_dates[i] for i in order]
 
-    split = int(len(rows) * (1 - VALID_FRACTION))
-    train_X, valid_X = _to_matrix(rows[:split]), _to_matrix(rows[split:])
-    train_y, valid_y = labels[:split], labels[split:]
+    split = int(len(y) * (1 - VALID_FRACTION))
+    train_X, valid_X = X[:split], X[split:]
+    train_y, valid_y = y[:split], y[split:]
 
     train_set = lgb.Dataset(train_X, label=train_y, feature_name=FEATURE_COLUMNS)
     valid_set = lgb.Dataset(valid_X, label=valid_y, feature_name=FEATURE_COLUMNS, reference=train_set)
 
     params = {
-        "objective": "binary",
-        "metric": "binary_logloss",
-        "verbosity": -1,
-        "num_leaves": 31,
-        "learning_rate": 0.05,
-        "min_data_in_leaf": 30,
+        "objective": "binary", "metric": "binary_logloss", "verbosity": -1,
+        "num_leaves": 31, "learning_rate": 0.05, "min_data_in_leaf": 30,
     }
     model = lgb.train(
-        params, train_set,
-        num_boost_round=300,
-        valid_sets=[valid_set],
+        params, train_set, num_boost_round=300, valid_sets=[valid_set],
         callbacks=[lgb.early_stopping(stopping_rounds=20, verbose=False), lgb.log_evaluation(period=0)],
     )
 
     valid_pred = model.predict(valid_X, num_iteration=model.best_iteration)
     valid_pred_label = [1 if p >= 0.5 else 0 for p in valid_pred]
-    accuracy = sum(1 for p, y in zip(valid_pred_label, valid_y) if p == y) / len(valid_y)
+    accuracy = sum(1 for p, yy in zip(valid_pred_label, valid_y) if p == yy) / len(valid_y)
     baseline_rate = sum(valid_y) / len(valid_y)
     baseline_accuracy = max(baseline_rate, 1 - baseline_rate)
-    auc = _auc(valid_y, list(valid_pred))
 
     importances = model.feature_importance(importance_type="gain")
     feature_importance = sorted(
@@ -210,21 +342,23 @@ def train_and_evaluate(rows, labels, anchor_dates):
         key=lambda x: -x["importance"],
     )
 
-    return model, {
-        "trainRows": len(train_X),
-        "validRows": len(valid_X),
-        "validDateFrom": anchor_dates[split] if split < len(anchor_dates) else None,
-        "validDateTo": anchor_dates[-1] if anchor_dates else None,
+    metrics = {
+        "trainRows": int(train_X.shape[0]),
+        "validRows": int(valid_X.shape[0]),
+        "validDateFrom": sorted_dates[split] if split < len(sorted_dates) else None,
+        "validDateTo": sorted_dates[-1] if sorted_dates else None,
         "validAccuracy": round(accuracy, 4),
         "baselineAccuracy": round(baseline_accuracy, 4),
-        "validAuc": auc,
+        "validAuc": _auc(valid_y, valid_pred),
         "validPositiveRate": round(baseline_rate, 4),
-        "featureImportance": feature_importance[:10],
+        "featureImportance": feature_importance[:12],
     }
+    return model, metrics
 
 
-def score_today(conn, model, universe: list[dict], today_prices: dict):
+def score_today(conn, models: dict, universe: list[dict], today_prices: dict, usage_idx: dict, br_idx: dict, set_first_seen: dict):
     today = date.today()
+    today_str = today.isoformat()
     feats, meta = [], []
     for info in universe:
         mid = info["mtgo_id"]
@@ -232,26 +366,38 @@ def score_today(conn, model, universe: list[dict], today_prices: dict):
         if price is None:
             continue
         ind = indicators.compute(conn, mid, price, as_of=today)
-        feats.append(_feature_row(ind, price, info))
+        set_seen = set_first_seen.get(info["cardset"])
+        extra = {
+            "usage_modern": usage_as_of(usage_idx, info["name"], "modern", today_str),
+            "usage_legacy": usage_as_of(usage_idx, info["name"], "legacy", today_str),
+            "set_age_days": (today - date.fromisoformat(set_seen)).days if set_seen else None,
+            "br_event_recent": br_event_recent(br_idx, info["name"], today_str),
+        }
+        feats.append(_feature_row(ind, price, info, extra))
         meta.append({
-            "name": info["name"],
-            "mtgoId": mid,
-            "price": price,
-            "chg7d": ind.get("chg_7d_pct"),
-            "chg30d": ind.get("chg_30d_pct"),
+            "name": info["name"], "mtgoId": mid, "price": price,
+            "chg7d": ind.get("chg_7d_pct"), "chg30d": ind.get("chg_30d_pct"),
         })
     if not feats:
-        return []
-    probs = model.predict(_to_matrix(feats), num_iteration=model.best_iteration)
-    results = []
-    for m, prob in zip(meta, probs):
-        results.append({**m, "predictedReboundProb": round(float(prob), 4)})
-    results.sort(key=lambda r: -r["predictedReboundProb"])
-    return results[:20]
+        return {}
+    X = _to_matrix(feats)
+    out = {}
+    for w, model in models.items():
+        probs = model.predict(X, num_iteration=model.best_iteration)
+        ranked = sorted(
+            ({**m, "predictedReboundProb": round(float(p), 4)} for m, p in zip(meta, probs)),
+            key=lambda r: -r["predictedReboundProb"],
+        )
+        out[w] = ranked[:20]
+    return out
 
 
 def run():
     with storage.connect() as conn:
+        import_metagame_usage_if_present(conn)
+        br_events = load_br_events()
+        br_idx = build_br_index(br_events)
+
         print("[goatbots] fetching card definitions ...")
         card_defs = goatbots_fetcher.fetch_card_definitions()
         storage.upsert_cards(conn, card_defs)
@@ -273,9 +419,12 @@ def run():
         rows_added = storage.upsert_daily_prices(conn, price_date, today_prices, only_ids=version_ids)
         print(f"[storage] recorded {rows_added} rows for {price_date}")
 
+        usage_idx = build_usage_index(conn, [u["name"] for u in universe])
+        set_first_seen = build_set_first_seen(conn)
+
         print("[dataset] building backtest feature/label rows ...")
-        rows, labels, anchor_dates = build_dataset(conn, universe)
-        print(f"[dataset] {len(rows)} anchor rows, positive rate {sum(labels)/len(labels):.3f}" if rows else "[dataset] no rows built")
+        rows, labels_by_window, anchor_dates = build_dataset(conn, universe, usage_idx, br_idx, set_first_seen)
+        print(f"[dataset] {len(rows)} anchor rows" if rows else "[dataset] no rows built")
 
         if len(rows) < 500:
             output = {
@@ -284,21 +433,34 @@ def run():
                 "message": f"只构造出 {len(rows)} 条训练样本，数据量不够训练，跳过本次。",
             }
         else:
-            print("[train] training LightGBM classifier ...")
-            model, metrics = train_and_evaluate(rows, labels, anchor_dates)
-            print(f"[train] valid accuracy={metrics['validAccuracy']} baseline={metrics['baselineAccuracy']} auc={metrics['validAuc']}")
+            coverage = _coverage(rows)
+            print(f"[coverage] usage_modern={coverage['usage_modern']} usage_legacy={coverage['usage_legacy']} "
+                  f"set_age_days={coverage['set_age_days']} br_event_recent={coverage['br_event_recent']}")
 
-            print("[score] scoring today's candidate pool ...")
-            top_candidates = score_today(conn, model, universe, today_prices)
+            X = _to_matrix(rows)
+            windows_out = {}
+            models = {}
+            for w in LOOKAHEAD_WINDOWS:
+                print(f"[train] window={w}d training LightGBM classifier ...")
+                model, metrics = train_one_window(X, labels_by_window[w], anchor_dates)
+                print(f"[train] window={w}d valid accuracy={metrics['validAccuracy']} "
+                      f"baseline={metrics['baselineAccuracy']} auc={metrics['validAuc']}")
+                models[w] = model
+                windows_out[str(w)] = metrics
+
+            print("[score] scoring today's candidate pool for all windows ...")
+            top_by_window = score_today(conn, models, universe, today_prices, usage_idx, br_idx, set_first_seen)
+            for w in LOOKAHEAD_WINDOWS:
+                windows_out[str(w)]["topCandidates"] = top_by_window.get(w, [])
 
             output = {
                 "runDate": date.today().isoformat(),
                 "status": "ok",
-                "lookaheadDays": LOOKAHEAD_DAYS,
                 "reboundThreshold": REBOUND_THRESHOLD,
                 "universeSize": len(universe),
-                **metrics,
-                "topCandidates": top_candidates,
+                "totalAnchorRows": len(rows),
+                "featureCoverage": coverage,
+                "windows": windows_out,
             }
 
         DATA_DIR.mkdir(parents=True, exist_ok=True)

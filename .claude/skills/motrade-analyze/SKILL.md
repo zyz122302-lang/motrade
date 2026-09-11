@@ -39,12 +39,32 @@ MTGTop8 线下 2 星以上赛事牌表（只做 Modern/Legacy，每个赛制取�
 
 ## 每周研究任务（另一个独立的定时任务，不是这个技能负责触发）
 
-`research_pipeline.py` 用 GoatBots 两年历史卖价回溯构造"某个信号出现后14天价格是否真的涨了
-8%以上"的训练样本，训练一个 LightGBM 分类器，目的是**校准** `strategies/*.yaml` 里的人工规则
-（尤其是 `supply_vs_demand_framework.yaml`），不是替代它，也**不接入本技能的每日流程**——
-由另一个 routine（每周日 09:00 UTC 跑一次，比每日流程慢得多，要下载多年历史归档）单独触发，
-产出写进仪表盘数据库的 `research_runs/latest` 文档，前端"数据研究"页签直接展示模型表现和
-特征重要性，供参考，不影响每日研判逻辑。
+`research_pipeline.py` 用 GoatBots 两年历史卖价回溯构造"某个信号出现后 7/14/30 天价格是否
+真的涨了8%以上"的训练样本，同时训练三个预测窗口的 LightGBM 分类器，目的是**校准**
+`strategies/*.yaml` 里的人工规则（尤其是 `supply_vs_demand_framework.yaml`），不是替代它，
+也**不接入本技能的每日流程**——由另一个 routine（每周日 09:00 UTC 跑一次，比每日流程慢
+得多，要下载多年历史归档）单独触发。
+
+特征除了价格历史，还包括赛制使用率、官方禁限事件、系列发售时间（数据驱动近似值，不额外
+抓取新数据源）。该 routine 跑 `research_pipeline.py` **之前**要先做两步桥接（用 Artifact
+工具，跟每日本技能第 1 步桥接使用率是同一个思路）：
+1. `read_db`（`db_op: "query"`）查 `metagame_usage` 集合（跟每日本技能一样，按 format 分别
+   查最近的记录），拼成 `{format: [{week_of, source, sample_size, usage}, ...]}`，写到
+   `data/metagame_import.json`。
+2. `read_db`（`db_op: "list"`）查 `news_events` 集合的全部文档，转成
+   `[{date, format, added: [...], removed: [...]}, ...]`（直接取每个文档的 `date`/`format`/
+   `added`/`removed` 字段即可），写到 `data/br_events_import.json`。
+两个文件都是可选的——不存在时 `research_pipeline.py` 会跳过对应特征（打印提示，不报错）。
+使用率/禁限事件这两类特征目前历史覆盖率很低（`metagame_usage`/`news_events` 才刚开始积累，
+而且"需要未来N天数据算标签"这个要求会让训练锚点的日期天然落后于"今天"，所以覆盖率要再过
+一段时间才会明显提高），`research_output.json` 里的 `featureCoverage` 字段会如实报告每个
+特征的非缺失比例，不需要因为覆盖率低就怀疑代码有问题——这是数据积累时间不够的正常反映。
+
+产出写进仪表盘数据库的 `research_runs/latest` 文档（结构：`{runDate, status, reboundThreshold,
+universeSize, totalAnchorRows, featureCoverage, windows: {"7": {...}, "14": {...}, "30": {...}}}`，
+每个窗口下有自己的 `trainRows`/`validRows`/`validAccuracy`/`baselineAccuracy`/`validAuc`/
+`featureImportance`/`topCandidates`），前端"数据研究"页签有窗口切换按钮，直接展示各窗口的
+模型表现和特征重要性，供参考，不影响每日研判逻辑。
 
 ## 官方禁限赛制公告监控（利空/利好情报，本技能自己负责，每天都跑）
 
