@@ -205,9 +205,6 @@
   .home-sub-head:first-of-type { margin-top: 2px; }
   .home-news-item { font-size: 12.5px; line-height: 1.6; padding: 6px 0; border-bottom: 1px solid var(--line); }
   .home-news-item:last-child { border-bottom: none; }
-  .br-format-block { margin-bottom: 10px; }
-  .br-format-block:last-child { margin-bottom: 0; }
-  .br-format-name { font-size: 11.5px; font-weight: 600; color: var(--text-dim); margin-bottom: 3px; }
   .br-cards { font-size: 12.5px; line-height: 1.6; }
   .tc-mini-forms { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-top: 16px; }
   @media (max-width: 460px) { .tc-mini-forms { grid-template-columns: 1fr; } }
@@ -644,11 +641,10 @@
     var formats = doc ? Object.keys(doc).filter(function (k) { return Array.isArray(doc[k]) && doc[k].length; }) : [];
     if (!formats.length) { wrap.innerHTML = ''; empty.hidden = false; return; }
     empty.hidden = true;
-    wrap.innerHTML = formats.map(function (fmt) {
-      var names = doc[fmt].map(function (n) { return escapeHtml(n); }).join('、');
-      return '<div class="br-format-block"><div class="br-format-name">' + escapeHtml(fmt) + '</div>' +
-        '<div class="br-cards">' + names + '</div></div>';
-    }).join('');
+    // 只给个数概览，不逐张列名字——具体新增/解除了哪张卡看上面"最新资讯"里的事件记录即可。
+    wrap.innerHTML = '<div class="br-cards">' + formats.map(function (fmt) {
+      return escapeHtml(fmt) + ' ' + doc[fmt].length + ' 张';
+    }).join(' &nbsp;·&nbsp; ') + '</div>';
   }
 
   var TC_NAME = 'Treasure Chest';
