@@ -850,10 +850,11 @@
     var all = fallItems.concat(riseItems);
     var matched = all.filter(function (i) { return String(i.primaryMtgoId) === String(candidate.mtgoId); })[0];
     if (matched) { renderDetailCard(matched, 'research'); return; }
+    var versions = candidate.versions || [];
     renderDetailCard({
       id: null,
       name: candidate.name,
-      rarity: '',
+      rarity: candidate.rarity || '',
       formats: [],
       primaryMtgoId: candidate.mtgoId,
       bestPrice: candidate.price,
@@ -862,8 +863,9 @@
       chg30d: candidate.chg30d,
       low90: null, ma7: null, ma30: null,
       verdict: null,
-      note: '该卡来自每周数据研究的候选打分，不在每日观察池的选卡范围内，暂时没有独立的研判笔记和多版本明细。',
-      versions: [],
+      note: '该卡来自每周数据研究的候选打分，不在每日观察池的选卡范围内，没有 Claude 每日研判笔记——' +
+        (versions.length ? '下面的版本切换器和价格曲线是研究流水线自己算出来的，跟每日观察池同一套数据来源。' : '这次研究流水线没能拿到它的版本明细（可能是刚发布不久或数据缺失），只能显示这一点基础信息。'),
+      versions: versions,
     }, 'research');
   }
 

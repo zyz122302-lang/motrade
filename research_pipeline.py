@@ -7,7 +7,11 @@
 supply_vs_demand_framework.yaml 里"跌势放缓不等于会反弹"这条），不是替代它、
 也不接入每日自动化流程——这里跑一次要下载两年的历史价格归档，比较重，
 每周跑一次就够了。产出写到 data/research_output.json，供每周 routine 读取后
-写进仪表盘数据库的 research_runs 集合。
+写进仪表盘数据库的 research_runs 集合；每个窗口挑出来的候选卡还会额外附带完整的
+versions 数组（跟每日 watchlist 文档同一套字段），对应的价格曲线数据另外写到
+data/research_price_history_export.json（{mtgo_id: {series: [...]}}），供 routine
+批量写进 price_history 集合——这样点开任何一张研究候选卡都能看到完整的版本切换器
+和价格曲线，不会因为它没在每日观察池里就只显示一个阉割版详情页。
 
 特征除了价格历史指标，还包括赛制使用率、官方禁限公告事件、系列发售时间这三类——
 **但这三类数据都是最近才开始积累的（使用率/禁限监控大约从 2026-09 才开始有真实
@@ -39,8 +43,10 @@ from config import DATA_DIR
 from fetchers import goatbots_fetcher, scryfall_fetcher
 
 OUTPUT_PATH = DATA_DIR / "research_output.json"
+PRICE_HISTORY_EXPORT_PATH = DATA_DIR / "research_price_history_export.json"
 METAGAME_IMPORT_PATH = DATA_DIR / "metagame_import.json"
 BR_EVENTS_IMPORT_PATH = DATA_DIR / "br_events_import.json"
+PRICE_HISTORY_MAX_POINTS = 30
 
 LOOKAHEAD_WINDOWS = [7, 14, 30]   # 同时训练这几个预测窗口（天）
 REBOUND_THRESHOLD = 0.08          # 涨幅 >= 8% 算反弹（正类），三个窗口用同一个阈值——
@@ -184,6 +190,68 @@ def select_research_universe(conn, today_prices: dict) -> list[dict]:
 
     universe.sort(key=lambda u: -u["today_price"])
     return universe[:MAX_CANDIDATE_NAMES]
+
+
+def build_versions_for_names(conn, names: set, today_prices: dict, cardhoarder_prices: dict) -> dict:
+    """返回 {name: [version_dict, ...]}，字段跟 pipeline.py 每日写进仪表盘 watchlist
+    文档里的 versions 数组同一套 camelCase 结构——这样单卡详情页不用区分"这张卡是
+    每日观察池选的还是研究流水线选的"，两边给的数据形状一样，前端直接复用同一套
+    渲染逻辑（版本切换器、价格曲线）就行，不需要额外写一套简化版展示。"""
+    versions_map = watchlist_builder.versions_by_name(conn, names)
+    today = date.today()
+    out = {}
+    for name, vinfos in versions_map.items():
+        versions = []
+        for vinfo in vinfos:
+            mid = vinfo["mtgo_id"]
+            gb_price = today_prices.get(str(mid))
+            ch_price = cardhoarder_prices.get(mid)
+            if gb_price is None and ch_price is None:
+                continue
+            ind = indicators.compute(conn, mid, gb_price, as_of=today) if gb_price is not None else {}
+            versions.append({
+                "mtgoId": mid,
+                "set": vinfo["set"],
+                "foil": bool(vinfo["foil"]),
+                "collectorNumber": vinfo.get("collector_number"),
+                "goatbotsPrice": gb_price,
+                "cardhoarderPrice": ch_price,
+                "chg7d": ind.get("chg_7d_pct"),
+                "chg30d": ind.get("chg_30d_pct"),
+                "low90": ind.get("low_90d"),
+                "ma7": ind.get("ma7"),
+                "ma30": ind.get("ma30"),
+            })
+        if versions:
+            out[name] = versions
+    return out
+
+
+def thin_series(history: list[tuple[str, float]], max_points: int = PRICE_HISTORY_MAX_POINTS):
+    """跟每日流程一样，价格曲线抽稀到最多 max_points 个点，避免单个文档太大。"""
+    if len(history) <= max_points:
+        return [[d, p] for d, p in history]
+    step = len(history) / max_points
+    out, i = [], 0.0
+    while int(i) < len(history):
+        out.append(list(history[int(i)]))
+        i += step
+    if list(history[-1]) != out[-1]:
+        out.append(list(history[-1]))
+    return out
+
+
+def build_price_history_export(conn, mtgo_ids: set) -> dict:
+    """{mtgo_id(str): {series: [[date, price], ...]}}，供 routine 写进 price_history
+    集合——跟每日流程用的是同一个集合/同一套 doc_id 规则（mtgo_id 字符串做 doc_id），
+    所以仪表盘详情页原有的 loadChartFor() 不用改一行代码就能读到这些数据。"""
+    out = {}
+    for mid in mtgo_ids:
+        history = storage.price_history_for(conn, mid, limit_days=800)
+        if len(history) < 2:
+            continue
+        out[str(mid)] = {"series": thin_series(history)}
+    return out
 
 
 def bootstrap_multi_year_history(conn, version_ids):
@@ -376,6 +444,7 @@ def score_today(conn, models: dict, universe: list[dict], today_prices: dict, us
         feats.append(_feature_row(ind, price, info, extra))
         meta.append({
             "name": info["name"], "mtgoId": mid, "price": price,
+            "rarity": info["rarity"],
             "chg7d": ind.get("chg_7d_pct"), "chg30d": ind.get("chg_30d_pct"),
         })
     if not feats:
@@ -450,8 +519,26 @@ def run():
 
             print("[score] scoring today's candidate pool for all windows ...")
             top_by_window = score_today(conn, models, universe, today_prices, usage_idx, br_idx, set_first_seen)
+
+            print("[enrich] fetching Cardhoarder prices for version enrichment ...")
+            cardhoarder_prices = scryfall_fetcher.fetch_cardhoarder_prices_by_mtgo_id()
+
+            candidate_names = {c["name"] for w in LOOKAHEAD_WINDOWS for c in top_by_window.get(w, [])}
+            print(f"[enrich] building full version data for {len(candidate_names)} candidate names "
+                  f"(so clicking any of them in the dashboard gets the same detail view as a daily-watchlist card) ...")
+            versions_by_candidate = build_versions_for_names(conn, candidate_names, today_prices, cardhoarder_prices)
+
+            all_version_mtgo_ids = set()
             for w in LOOKAHEAD_WINDOWS:
+                for c in top_by_window.get(w, []):
+                    vs = versions_by_candidate.get(c["name"], [])
+                    c["versions"] = vs
+                    all_version_mtgo_ids.update(v["mtgoId"] for v in vs)
                 windows_out[str(w)]["topCandidates"] = top_by_window.get(w, [])
+
+            price_history_export = build_price_history_export(conn, all_version_mtgo_ids)
+            PRICE_HISTORY_EXPORT_PATH.write_text(json.dumps(price_history_export, ensure_ascii=False), encoding="utf-8")
+            print(f"[enrich] wrote {PRICE_HISTORY_EXPORT_PATH} with {len(price_history_export)} printings' price history")
 
             output = {
                 "runDate": date.today().isoformat(),
