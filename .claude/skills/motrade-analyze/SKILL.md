@@ -66,6 +66,27 @@ universeSize, totalAnchorRows, featureCoverage, windows: {"7": {...}, "14": {...
 `featureImportance`/`topCandidates`），前端"数据研究"页签有窗口切换按钮，直接展示各窗口的
 模型表现和特征重要性，供参考，不影响每日研判逻辑。
 
+`topCandidates` 已经在 `research_pipeline.py` 里按预测反弹概率 >50% 过滤、每个窗口最多截断到
+10 张（见脚本里的 `DISPLAY_MIN_PROB`/`DISPLAY_MAX_PER_WINDOW`），routine **不需要**自己再做
+这层过滤/截断，但**需要**给每个窗口筛出来的候选卡逐一研判——不能只把裸的 `predictedReboundProb`
+数字丢给用户。研判方法跟每日本技能第 2 步完全一样：
+- 参考 `strategies/*.yaml`（尤其是 `supply_vs_demand_framework.yaml`——研究流水线的模型信号
+  本身不知道供给/需求驱动的区别，这一步就是补上这个判断），给每张候选卡定性成
+  `stabilizing`/`falling_knife`/`established`/`momentum`/`caution` 里的一个（取值必须是这几个
+  英文 key，仪表盘按这几个渲染）。
+- 候选卡如果是纯指挥官(EDH)/收藏向/Un-系列卡（不在摩登/薪传竞技环境里，哪怕 Scryfall 判定它
+  "legal"），要在 note 里点破——这类卡的赛制合法性对模型来说是"合法"，但实际没有竞技情报支撑，
+  信号可信度天然更低，一般应该标 `caution`。
+- 涨跌幅明显、原因不确定的，先 `WebSearch` 核实（跟每日流程同一条规则，不要凭训练知识猜，
+  确实搜不到就如实写"原因未确认"）。
+- 如果某张候选卡名字跟当日 `watchlist` 集合里的卡重复（比如同一张卡这周同时被两边选中），
+  直接沿用当日观察池那边已经写好的研判结论，保持口径一致，不要重新编一套不一样的说法。
+- 把结果写回每个候选卡对象的 `verdict`/`note` 字段（跟每日 `watchlist` 文档同一套字段名），
+  再整体写入 `research_runs/latest`。
+
+这一步需要 routine 的 `allowed_tools` 里有 `WebSearch`（创建/更新这个 routine 时记得带上，
+不要只给 `Bash`/`Read`/`Write`/`Artifact`）。
+
 ## 官方禁限赛制公告监控（利空/利好情报，本技能自己负责，每天都跑）
 
 价格和使用率是"技术面"，禁限赛制变化和新系列上线是"情报面"里最硬的两类利空/利好信号——

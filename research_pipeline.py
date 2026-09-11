@@ -49,6 +49,8 @@ BR_EVENTS_IMPORT_PATH = DATA_DIR / "br_events_import.json"
 PRICE_HISTORY_MAX_POINTS = 30
 
 LOOKAHEAD_WINDOWS = [7, 14, 30]   # 同时训练这几个预测窗口（天）
+DISPLAY_MIN_PROB = 0.5            # 仪表盘只展示预测反弹概率超过这个阈值的候选
+DISPLAY_MAX_PER_WINDOW = 10       # 每个窗口最多保留几张（概率降序截断）
 REBOUND_THRESHOLD = 0.08          # 涨幅 >= 8% 算反弹（正类），三个窗口用同一个阈值——
                                    # 注意这意味着窗口越长，达到阈值天然越容易，
                                    # 三个窗口的正类比例不可直接比较"预测难度"，
@@ -225,6 +227,32 @@ def build_versions_for_names(conn, names: set, today_prices: dict, cardhoarder_p
         if versions:
             out[name] = versions
     return out
+
+
+def collect_version_ids_for_names(conn, names: set) -> set:
+    """只拿这些卡名下所有已知印刷版本的 mtgo_id 集合，不算指标——用于在正式
+    枚举版本数据之前，先知道要不要给这些"非主力版本"（训练用的 1200 张候选池
+    只回填了每张卡最便宜那个版本的历史价格）额外补一次历史，不然它们的版本
+    切换器会有 set/foil/现价，但价格曲线和 chg7d/chg30d 是空的。"""
+    versions_map = watchlist_builder.versions_by_name(conn, names)
+    return {v["mtgo_id"] for vs in versions_map.values() for v in vs}
+
+
+def bootstrap_ids_for_years(conn, ids: set, years):
+    """强制为指定 id 集合回补历史，不看 `research_bootstrap_done_<year>` 标记——
+    那个标记只代表"训练用的 1200 张主力版本已经回填过"，这里要补的是研究候选卡
+    的非主力版本，是完全不同的一批 id，用同一个标记会误判成"已经做过"而跳过。"""
+    if not ids:
+        return
+    for year in years:
+        print(f"[bootstrap-extra] {year} for {len(ids)} secondary-version ids ...")
+        try:
+            total = 0
+            for day_str, prices in goatbots_fetcher.iter_year_history(year):
+                total += storage.upsert_daily_prices(conn, day_str, prices, only_ids=ids)
+            print(f"[bootstrap-extra] {year}: {total} rows ingested")
+        except Exception as e:
+            print(f"[bootstrap-extra] {year} unavailable ({e}), skipping")
 
 
 def thin_series(history: list[tuple[str, float]], max_points: int = PRICE_HISTORY_MAX_POINTS):
@@ -457,7 +485,10 @@ def score_today(conn, models: dict, universe: list[dict], today_prices: dict, us
             ({**m, "predictedReboundProb": round(float(p), 4)} for m, p in zip(meta, probs)),
             key=lambda r: -r["predictedReboundProb"],
         )
-        out[w] = ranked[:20]
+        # 只展示真的过了概率门槛的，不为了凑数塞进排名靠前但其实没到50%的候选——
+        # 某个窗口这周一个都没过线是正常现象，仪表盘会如实显示"没有候选"，不用硬凑10个
+        shown = [r for r in ranked if r["predictedReboundProb"] > DISPLAY_MIN_PROB][:DISPLAY_MAX_PER_WINDOW]
+        out[w] = shown
     return out
 
 
@@ -526,6 +557,14 @@ def run():
             candidate_names = {c["name"] for w in LOOKAHEAD_WINDOWS for c in top_by_window.get(w, [])}
             print(f"[enrich] building full version data for {len(candidate_names)} candidate names "
                   f"(so clicking any of them in the dashboard gets the same detail view as a daily-watchlist card) ...")
+
+            candidate_version_ids = collect_version_ids_for_names(conn, candidate_names)
+            missing_ids = candidate_version_ids - version_ids  # version_ids = 训练用主力版本集合，已经有历史
+            if missing_ids:
+                print(f"[enrich] {len(missing_ids)} of {len(candidate_version_ids)} candidate printings are "
+                      f"non-primary versions with no local history yet, backfilling ...")
+                bootstrap_ids_for_years(conn, missing_ids, (date.today().year - 1, date.today().year))
+
             versions_by_candidate = build_versions_for_names(conn, candidate_names, today_prices, cardhoarder_prices)
 
             all_version_mtgo_ids = set()

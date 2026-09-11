@@ -368,7 +368,11 @@
         官方禁限事件、系列发售时间（数据驱动近似值），跟
         <code>strategies/supply_vs_demand_framework.yaml</code> 里写的人工规则互相印证。
         使用率/禁限事件这两类特征才刚开始积累历史，覆盖率会随时间推移自然提高——下面的
-        "特征覆盖率"如实显示当前状态。<strong>预测概率仅供参考，不是交易建议</strong>。
+        "特征覆盖率"如实显示当前状态。每个窗口只保留预测反弹概率超过50%的候选，最多10张
+        （不够10张就有几张显示几张，某个窗口一张都没有是正常情况，不会硬凑）；每张入选的
+        候选卡都会像每日观察池一样套用 <code>strategies/*.yaml</code> 做研判、异常涨跌先
+        WebSearch 核实，附上"研判"标签和结论笔记，不是只给一个裸概率数字。
+        <strong>预测概率仅供参考，不是交易建议</strong>。
       </p>
       <div id="research-empty" class="empty-state" hidden>还没有研究结果，等每周研究任务跑一次。</div>
       <div id="research-body" hidden>
@@ -384,7 +388,7 @@
         <h3 style="font-size:15px;margin-bottom:8px;">预测反弹概率 &gt; 50% 的候选（按概率降序，点卡名可查看详情）</h3>
         <div class="table-wrap">
           <table id="research-table">
-            <thead><tr><th>卡牌</th><th class="num">现价</th><th class="num">7日</th><th class="num">30日</th><th class="num">预测反弹概率</th></tr></thead>
+            <thead><tr><th>卡牌</th><th>研判</th><th class="num">现价</th><th class="num">7日</th><th class="num">30日</th><th class="num">预测反弹概率</th></tr></thead>
             <tbody id="research-table-body"></tbody>
           </table>
         </div>
@@ -623,15 +627,18 @@
     }).join('') || '<p class="panel-note">无数据</p>';
 
     researchCandidatesByMtgoId = {};
-    var cands = (w.topCandidates || []).filter(function (r) { return r.predictedReboundProb > 0.5; });
+    // 后端（research_pipeline.py）已经按 >50% 概率筛过、每个窗口最多留10张，
+    // 这里的过滤/截断是防御性的，避免旧缓存数据或异常情况下表格显示超出预期
+    var cands = (w.topCandidates || []).filter(function (r) { return r.predictedReboundProb > 0.5; }).slice(0, 10);
     cands.forEach(function (r) { researchCandidatesByMtgoId[r.mtgoId] = r; });
     document.getElementById('research-table-body').innerHTML = cands.map(function (r) {
       return '<tr class="card-row" data-mtgo-id="' + r.mtgoId + '"><td class="card-name">' + escapeHtml(r.name) + '</td>' +
+        '<td>' + (r.verdict ? verdictChip(r.verdict) : '<span class="panel-note" style="margin:0;">待研判</span>') + '</td>' +
         '<td class="num price">' + fmtTix(r.price) + '</td>' +
         '<td class="num">' + chgHtml(r.chg7d) + '</td>' +
         '<td class="num">' + chgHtml(r.chg30d) + '</td>' +
         '<td class="num price">' + fmtPct(r.predictedReboundProb) + '</td></tr>';
-    }).join('') || '<tr><td colspan="5" class="panel-note">这个窗口本周没有预测反弹概率超过50%的候选——模型打分整体偏保守是正常现象，不代表没有值得关注的卡，可以换个窗口看看，或者参考"下跌观察/上涨观察"里 Claude 的研判。</td></tr>';
+    }).join('') || '<tr><td colspan="6" class="panel-note">这个窗口本周没有预测反弹概率超过50%的候选——模型打分整体偏保守是正常现象，不代表没有值得关注的卡，可以换个窗口看看，或者参考"下跌观察/上涨观察"里 Claude 的研判。</td></tr>';
   }
 
   function fmtPct(x) {
@@ -880,9 +887,9 @@
       chg7d: candidate.chg7d,
       chg30d: candidate.chg30d,
       low90: null, ma7: null, ma30: null,
-      verdict: null,
-      note: '该卡来自每周数据研究的候选打分，不在每日观察池的选卡范围内，没有 Claude 每日研判笔记——' +
-        (versions.length ? '下面的版本切换器和价格曲线是研究流水线自己算出来的，跟每日观察池同一套数据来源。' : '这次研究流水线没能拿到它的版本明细（可能是刚发布不久或数据缺失），只能显示这一点基础信息。'),
+      verdict: candidate.verdict || null,
+      note: candidate.note || ('该卡来自每周数据研究的候选打分，不在每日观察池的选卡范围内，还没有研判笔记——' +
+        (versions.length ? '下面的版本切换器和价格曲线是研究流水线自己算出来的，跟每日观察池同一套数据来源。' : '这次研究流水线没能拿到它的版本明细（可能是刚发布不久或数据缺失），只能显示这一点基础信息。')),
       versions: versions,
     }, 'research');
   }
