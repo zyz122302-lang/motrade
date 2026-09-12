@@ -615,8 +615,6 @@
     var sorted = filtered.slice().sort(function (a, b) {
       return Math.abs(b.chg30d || 0) - Math.abs(a.chg30d || 0);
     }).slice(0, MAX_PER_FORMAT);
-    var asof = sorted[0] && sorted[0].asOf;
-    if (asof) document.getElementById('stat-asof').textContent = asof;
     body.innerHTML = sorted.map(function (c) {
       var rarityClass = 'rarity-' + (c.rarity || 'Common');
       var versionNote = (c.versionCount > 1 ? c.versionCount + ' 个版本 &middot; ' : '') + (SOURCE_LABEL[c.bestSource] || '');
@@ -1611,6 +1609,11 @@
       document.getElementById('stat-rise').textContent = String(riseItems.length);
       document.getElementById('tab-fall-count').textContent = fallItems.length || '';
       document.getElementById('tab-rise-count').textContent = riseItems.length || '';
+      // "数据日期"取全部卡里最新的 asOf（不是某个排序后碰巧第一个的卡的 asOf）——
+      // 候选池刷新有时只更新部分卡（比如云端任务被网络策略挡住后手动补跑），
+      // 用"最新"而不是"任意一张"能避免个别卡数据滞后时把这个日期显示拉回去。
+      var latestAsOf = all.reduce(function (max, c) { return (c.asOf || '') > max ? c.asOf : max; }, '');
+      if (latestAsOf) document.getElementById('stat-asof').textContent = latestAsOf;
       renderList('fall-body', fallItems, 'fall');
       renderList('rise-body', riseItems, 'rise');
       renderHoldings();
