@@ -252,11 +252,28 @@ Play Points 发奖）也会直接影响它的供给。多数时候它的价格�
    Chest 自己的逻辑理解，不是按单卡赛制供需理解），写一两句 `note`（现价、7日/30日变动、
    是否有已知的内容刷新/赛事结构变化能解释走势，解释不了就如实写"正常区间内波动，无信号"），
    把这两个字段加进第2步的 JSON 里。
-4. 用 `write_db`（`db_op: "set"`）把（加了 `verdict`/`note` 之后的）这份 JSON 拆成两份写：
-   - 去掉 `series` 字段后的其余内容，写到 `special_items/treasure_chest`（首页价格面板和
-     详情页都读这个文档，字段名保持跟 `data/treasure_chest.json` 一致，不用转驼峰）。
-   - 只取 `series` 字段，包成 `{series: [...]}`，写到 `price_history/{mtgoId}`（跟普通
-     单卡版本共用同一个集合，仪表盘的走势图直接复用现成的 `buildChart` 渲染逻辑）。
+4. 把（加了 `verdict`/`note` 之后的）这份 JSON 拆成两份写：
+   - 去掉 `series` 字段后的其余内容，用 `write_db`（**`db_op: "update"`，不是 `"set"`**——
+     这个文档里还带着下面第5步维护的 `nextRefreshDate`/`refreshHistory` 字段，用 `set`
+     会把它们整体覆盖清空，必须用 `update` 合并写入）写到 `special_items/treasure_chest`
+     （首页价格面板和详情页都读这个文档，字段名保持跟 `data/treasure_chest.json` 一致，
+     不用转驼峰）。
+   - 只取 `series` 字段，包成 `{series: [...]}`，用 `write_db`（`db_op: "set"`，这份是独立
+     文档，正常整份覆盖没问题）写到 `price_history/{mtgoId}`（跟普通单卡版本共用同一个集合，
+     仪表盘的走势图直接复用现成的 `buildChart` 渲染逻辑）。
+5. **维护刷新日历**（仪表盘详情页"下次内容刷新预计"+"历史刷新日期"板块的数据源，字段是
+   `nextRefreshDate`（字符串日期）和 `refreshHistory`（`[{date, note}, ...]`数组），都存在
+   `special_items/treasure_chest` 文档里，跟上一步同一份 `update` 一起写，不用分开调用）：
+   - 先 `read_db`（`db_op: "get"`）读一下这个文档现有的 `nextRefreshDate`。
+   - 如果**今天的日期还没到那个 `nextRefreshDate`**，通常不用改——但如果 WebSearch
+     "MTGO Treasure Chest contents update" 查到官方把下次日期改了（比如推迟），就更新成
+     新查到的日期。
+   - 如果**今天的日期已经到了或过了**现有的 `nextRefreshDate`：说明那次刷新已经生效，把它
+     追加进 `refreshHistory`（`note` 写这次刷新绑定的系列名，或者"常规轮换"，从 WebSearch
+     或本次 `note` 里的判断取），再 WebSearch 查一下官方页面公布的**新一期**"下次更新"日期，
+     更新 `nextRefreshDate`。查不到新日期就把 `nextRefreshDate` 留空，不要编。
+   - 这一步不是每天都需要产出新内容（多数天 `nextRefreshDate` 还没到，直接沿用），但**每天
+     都要检查一次**，避免这个日期过期了很久都没人发现。
 
 ## 买卖价差统计（仪表盘"买价记录"页签自己的板块，本技能自己负责，每天都跑）
 
