@@ -54,6 +54,17 @@ def from_history(history: list[tuple[str, float]], current_price: float, as_of: 
     big_drop_7d = chg_7d is not None and chg_7d <= -15
     big_gain_7d = chg_7d is not None and chg_7d >= 15
 
+    # 绝对美元变动（不是百分比）——百分比排序天然偏向低价卡（同样几美分的波动在低价卡上
+    # 就是几百%，高价卡上是零点几%），所以另外算一份美元差值，供 pipeline.py 单独再排一份
+    # "绝对金额变动"榜单，避免真正有分量的高价卡波动被百分比榜单挤出候选池。
+    def abs_diff(old):
+        if old is None:
+            return None
+        return round(current_price - old, 4)
+
+    chg_7d_abs = abs_diff(p7)
+    chg_30d_abs = abs_diff(p30)
+
     ma7 = round(sum(prices_only[-7:]) / len(prices_only[-7:]), 2) if prices_only else None
     ma30 = round(sum(prices_only[-30:]) / len(prices_only[-30:]), 2) if prices_only else None
 
@@ -72,6 +83,8 @@ def from_history(history: list[tuple[str, float]], current_price: float, as_of: 
         "chg_7d_pct": chg_7d,
         "chg_30d_pct": pct(p30, current_price),
         "chg_90d_pct": pct(p90, current_price),
+        "chg_7d_abs": chg_7d_abs,
+        "chg_30d_abs": chg_30d_abs,
         "low_90d": low_90,
         "high_90d": high_90,
         "near_90d_low": near_low,

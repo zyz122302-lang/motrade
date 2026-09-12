@@ -166,6 +166,8 @@ def run():
                     "chg_7d_pct": ind.get("chg_7d_pct"),
                     "chg_30d_pct": ind.get("chg_30d_pct"),
                     "chg_90d_pct": ind.get("chg_90d_pct"),
+                    "chg_7d_abs": ind.get("chg_7d_abs"),
+                    "chg_30d_abs": ind.get("chg_30d_abs"),
                     "low_90d": ind.get("low_90d"),
                     "high_90d": ind.get("high_90d"),
                     "near_90d_low": ind.get("near_90d_low", False),
@@ -202,6 +204,8 @@ def run():
                 "chg_7d_pct": primary["chg_7d_pct"],
                 "chg_30d_pct": primary["chg_30d_pct"],
                 "chg_90d_pct": primary["chg_90d_pct"],
+                "chg_7d_abs": primary["chg_7d_abs"],
+                "chg_30d_abs": primary["chg_30d_abs"],
                 "low_90d": primary["low_90d"],
                 "ma7": primary["ma7"],
                 "ma30": primary["ma30"],
@@ -220,6 +224,16 @@ def run():
         risers = [r for r in card_results if r["near_90d_high"] or r["big_gain_7d"]]
         risers.sort(key=lambda r: -(r["chg_30d_pct"] if r["chg_30d_pct"] is not None else 0))
 
+        # 百分比榜单天然偏向低价卡（同样几美分的波动在低价卡上就是几百%，高价卡上只是
+        # 零点几%），所以另外按"30日绝对美元变动"单独排一份并列榜单，覆盖全部候选池（不
+        # 预先要求 near_90d_low/big_drop_7d 这类百分比门槛），确保高价卡有分量的真实波动
+        # 不会被百分比排序挤出候选视野。见 2026-09-13 与用户的讨论。
+        dollar_drops = [r for r in card_results if r.get("chg_30d_abs") is not None and r["chg_30d_abs"] < 0]
+        dollar_drops.sort(key=lambda r: r["chg_30d_abs"])
+
+        dollar_gains = [r for r in card_results if r.get("chg_30d_abs") is not None and r["chg_30d_abs"] > 0]
+        dollar_gains.sort(key=lambda r: -r["chg_30d_abs"])
+
         output = {
             "asOf": price_date,
             "generatedAt": datetime.now().isoformat(),
@@ -228,10 +242,18 @@ def run():
             "riserCount": len(risers),
             "signals": signals[:40],
             "risers": risers[:40],
+            "dollarDropCount": len(dollar_drops),
+            "dollarGainCount": len(dollar_gains),
+            "dollarDrops": dollar_drops[:40],
+            "dollarGains": dollar_gains[:40],
         }
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         OUTPUT_PATH.write_text(json.dumps(output, ensure_ascii=False, indent=2), encoding="utf-8")
-        print(f"[done] wrote {OUTPUT_PATH} — {len(card_results)} candidate cards, {len(signals)} signals, {len(risers)} risers")
+        print(
+            f"[done] wrote {OUTPUT_PATH} — {len(card_results)} candidate cards, "
+            f"{len(signals)} pct signals, {len(risers)} pct risers, "
+            f"{len(dollar_drops)} dollar drops, {len(dollar_gains)} dollar gains"
+        )
 
 
 if __name__ == "__main__":
