@@ -417,7 +417,17 @@ python pipeline.py
 ### 2. 读取输出，套用策略做研判
 
 读取 `data/latest_watchlist.json` 的 `signals`（下跌候选）和 `risers`（上涨候选）两个数组，
-每个元素是一张卡，含 `versions` 数组。对每一张候选卡（基于其 primary version 的指标），参考
+每个元素是一张卡，含 `versions` 数组。**同时也要读 `dollarDrops`/`dollarGains` 这两个数组**
+（结构跟 `signals`/`risers` 一样，都是卡对象）——`signals`/`risers` 是按 `chg_30d_pct`
+（百分比涨跌幅）排序筛出来的，这个排序方式天然偏向低价卡（同样几美分的波动在低价卡上就是
+几百%，高价卡上只是零点几%），会把真正有分量的高价卡波动挤出候选视野；`dollarDrops`/
+`dollarGains` 是按 `chg_30d_abs`（30日绝对美元变动）单独排的并列榜单，不预先要求
+`near_90d_low`/`big_drop_7d` 这类百分比门槛，能补上高价卡的真实波动（2026-09-13 与用户
+讨论后加入，见 `pipeline.py` 里的注释）。选候选时两份榜单都要看，同一张卡如果两边都出现
+（常见，因为大波动往往百分比和美元变动都大），按一份处理即可，不要重复研判；只出现在
+`dollarDrops`/`dollarGains`（百分比不够显著、但美元变动可观的高价卡）的卡，判断标准跟
+下面一致，只是不要因为它没触发 `near_90d_low`/`big_drop_7d` 就当成"不够格"直接跳过——
+这正是这两个并列榜单存在的意义。对每一张候选卡（基于其 primary version 的指标），参考
 `strategies/*.yaml` 里的策略描述（dip_stabilizing 企稳 / falling_knife_caution 仍在下跌 /
 new_set_decay 新卡衰减 / established_staple_dip 老卡折价 / momentum_up 上涨动量），判断这张卡
 属于哪一类，并结合你自己对 Modern/Legacy 赛制环境的了解，给出简短研判。如果同一张卡不同版本
