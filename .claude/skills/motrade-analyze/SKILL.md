@@ -104,6 +104,14 @@ totalAnchorRows, featureCoverage, panels: {"rebound": {label, threshold, windows
   在两边的 note 里都如实说明这个矛盾，不要各写各的、互相打架。
 - 把结果写回每个候选卡对象的 `verdict`/`note` 字段（跟每日 `watchlist` 文档同一套字段名），
   再整体写入 `research_runs/latest`。
+- **卡图**（2026-09-14 起要求：仪表盘"数据研究"页签跟"上涨/下跌观察"一样，展示出来的每张
+  候选卡都要有图，不能因为它不属于每日观察池就跳过）：每张写进 `topCandidates` 的候选卡，
+  按"运行步骤"第4步"卡图"小节同一套逻辑处理——先看这个 `mtgoId` 是否已经在 `card_images`
+  集合里有文档，或者当日 `watchlist` 集合里凑巧有同一个 `primaryMtgoId` 的卡（有的话直接
+  复用，不用重新下载）；没有的话用 `fetch_card_image.py` 抓图，优先 `upload_asset`
+  （写 `imageUrl`/`imageAssetId` 到候选卡对象本身），不可用时退回 `card_images` 集合的
+  data URI 兜底方案（doc_id 用 `String(mtgoId)`，不用往候选卡对象里加字段，前端会自动按
+  `mtgoId` 去这个集合找）。
 
 **研判存档**（供"研判命中率回评"到期后核对用，见每日本技能里的同名小节）：给两个板块、每个
 窗口里最终写进 `research_runs/latest` 的每一张 `topCandidate`，用 `write_db`
@@ -518,7 +526,12 @@ verdict 的取值必须是上面枚举里的英文 key（仪表盘 CSS/文案按
 同一个 `set` 代码下经常混着好几种实际印刷（普通版/无边框版/复古边框版等，比如 Exploration 的
 DMR 版就有两种，`set` 都是 "DMR"），光看 set+foil 分不出来，仪表盘就是靠这个字段区分的。
 
-**卡图（每张入选卡都要配）**：写入前先 `read_db`（`db_op: "get"`）看这张卡在 `watchlist`
+**卡图（每张入选卡都要配，没有例外）**：不只是新入选的卡要配图——每次跑完第3步选卡之后，
+如果发现某张**继续留在**本轮观察池里的卡（不管是沿用之前的还是重新入选）仍然缺图
+（`watchlist` 文档里既没有 `imageUrl`/`imageAssetId`，`card_images` 集合里也没有对应
+`primaryMtgoId` 的兜底文档），必须在这一轮补上，不能因为"这张卡不是今天新加的"就跳过
+——仪表盘前端现在会给列表里每一行都渲染缩略图，缺图的卡会一直显示空白占位，用户能直接
+看出来。写入前先 `read_db`（`db_op: "get"`）看这张卡在 `watchlist`
 集合里已有的文档：
 - 如果已有文档的 `primaryMtgoId` 跟这次一样、且带着 `imageAssetId`（assets 路径）或者
   `card_images` 集合里已经有这个 mtgoId 的文档（data URI 路径，见下面兜底方案），说明图已经

@@ -123,6 +123,10 @@
   .rarity-Rare .rarity-dot { background: var(--rare); }
   .rarity-Mythic .rarity-dot { background: var(--mythic); }
   .price { font-family: 'IBM Plex Mono', monospace; font-weight: 500; }
+  .card-thumb {
+    width: 24px; height: 33px; object-fit: cover; border-radius: 3px; margin-right: 8px;
+    vertical-align: middle; flex-shrink: 0; border: 1px solid var(--line); background: var(--paper);
+  }
 
   .verdict-chip {
     display: inline-block; font-size: 10.5px; padding: 2px 7px; border-radius: 20px;
@@ -620,20 +624,27 @@
     // 否则纯百分比排序会把候选池里百分比较低、但美元变动更有分量的卡挤出显示范围之外，
     // 跟今天刚修复的后端百分比偏向问题是同一个bug，只是发生在前端。
     if (activeFmt !== 'all') sorted = sorted.slice(0, MAX_PER_FORMAT);
+    var thumbTargets = [];
     body.innerHTML = sorted.map(function (c) {
       var rarityClass = 'rarity-' + (c.rarity || 'Common');
       var versionNote = (c.versionCount > 1 ? c.versionCount + ' 个版本 &middot; ' : '') + (SOURCE_LABEL[c.bestSource] || '');
       var fmtChips = (c.formats || []).map(function (f) {
         return '<span class="set-chip">' + (FORMAT_LABEL[f] || f) + '</span>';
       }).join('');
+      var thumbId = 'thumb-' + bodyId + '-' + c.id;
+      if (!c.imageUrl && c.primaryMtgoId) thumbTargets.push({ elId: thumbId, mtgoId: c.primaryMtgoId });
+      var thumbHtml = '<img class="card-thumb" id="' + thumbId + '" alt=""' +
+        (c.imageUrl ? ' src="' + c.imageUrl + '"' : ' style="visibility:hidden"') +
+        ' onerror="this.style.visibility=\'hidden\'" />';
       return '<tr class="card-row ' + rarityClass + '" data-id="' + c.id + '">' +
-        '<td class="card-name"><span class="rarity-dot"></span>' + escapeHtml(c.name) + fmtChips +
+        '<td class="card-name">' + thumbHtml + '<span class="rarity-dot"></span>' + escapeHtml(c.name) + fmtChips +
         '<div style="font-size:10.5px;color:var(--text-dim);margin-top:2px;">' + versionNote + '</div></td>' +
         '<td>' + verdictChip(c.verdict) + '</td>' +
         '<td class="num price">' + fmtTix(c.bestPrice) + '</td>' +
         '<td class="num">' + chgHtml(c.chg30d) + '</td>' +
         '</tr>';
     }).join('');
+    thumbTargets.forEach(function (t) { loadCardArtInto(t.elId, t.mtgoId); });
   }
 
   function renderHoldings() {
@@ -944,14 +955,21 @@
     // 这里的过滤/截断是防御性的，避免旧缓存数据或异常情况下表格显示超出预期
     var cands = (w.topCandidates || []).filter(function (r) { return r[meta.probField] > 0.5; }).slice(0, 10);
     cands.forEach(function (r) { researchCandidatesByMtgoId[r.mtgoId] = r; });
+    var researchThumbTargets = [];
     document.getElementById('research-table-body').innerHTML = cands.map(function (r) {
-      return '<tr class="card-row" data-mtgo-id="' + r.mtgoId + '"><td class="card-name">' + escapeHtml(r.name) + '</td>' +
+      var thumbId = 'thumb-research-' + r.mtgoId;
+      if (!r.imageUrl && r.mtgoId) researchThumbTargets.push({ elId: thumbId, mtgoId: r.mtgoId });
+      var thumbHtml = '<img class="card-thumb" id="' + thumbId + '" alt=""' +
+        (r.imageUrl ? ' src="' + r.imageUrl + '"' : ' style="visibility:hidden"') +
+        ' onerror="this.style.visibility=\'hidden\'" />';
+      return '<tr class="card-row" data-mtgo-id="' + r.mtgoId + '"><td class="card-name">' + thumbHtml + escapeHtml(r.name) + '</td>' +
         '<td>' + (r.verdict ? verdictChip(r.verdict) : '<span class="panel-note" style="margin:0;">待研判</span>') + '</td>' +
         '<td class="num price">' + fmtTix(r.price) + '</td>' +
         '<td class="num">' + chgHtml(r.chg7d) + '</td>' +
         '<td class="num">' + chgHtml(r.chg30d) + '</td>' +
         '<td class="num price">' + fmtPct(r[meta.probField]) + '</td></tr>';
     }).join('') || '<tr><td colspan="6" class="panel-note">' + escapeHtml(meta.emptyMsg) + '</td></tr>';
+    researchThumbTargets.forEach(function (t) { loadCardArtInto(t.elId, t.mtgoId); });
   }
 
   function fmtPct(x) {
@@ -1541,6 +1559,22 @@
       if (!dataUri) return;
       img.src = dataUri;
       img.hidden = false;
+    }).catch(function () {});
+  }
+
+  // 跟 loadCardArt 同一个数据来源（card_images 集合的 data URI 兜底方案），但用于列表行里的
+  // 小缩略图（观察池列表 + 数据研究候选表），可以指定任意元素 id，不像 loadCardArt 只服务
+  // 详情页那一个固定 id 的大图。
+  function loadCardArtInto(elId, mtgoId) {
+    if (!db || !mtgoId) return;
+    db.collection('card_images').doc(String(mtgoId)).get().then(function (snap) {
+      if (!snap.exists) return;
+      var img = document.getElementById(elId);
+      if (!img) return;
+      var dataUri = (snap.data() || {}).dataUri;
+      if (!dataUri) return;
+      img.src = dataUri;
+      img.style.visibility = 'visible';
     }).catch(function () {});
   }
 
