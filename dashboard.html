@@ -614,7 +614,12 @@
     }
     var sorted = filtered.slice().sort(function (a, b) {
       return Math.abs(b.chg30d || 0) - Math.abs(a.chg30d || 0);
-    }).slice(0, MAX_PER_FORMAT);
+    });
+    // MAX_PER_FORMAT 是"每个具体赛制最多显示10张"的设计意图（见 SKILL.md 步骤3），只应
+    // 在筛选到某个具体赛制时生效；"全部"这个默认视图应该展示当天筛选出的全部候选卡——
+    // 否则纯百分比排序会把候选池里百分比较低、但美元变动更有分量的卡挤出显示范围之外，
+    // 跟今天刚修复的后端百分比偏向问题是同一个bug，只是发生在前端。
+    if (activeFmt !== 'all') sorted = sorted.slice(0, MAX_PER_FORMAT);
     body.innerHTML = sorted.map(function (c) {
       var rarityClass = 'rarity-' + (c.rarity || 'Common');
       var versionNote = (c.versionCount > 1 ? c.versionCount + ' 个版本 &middot; ' : '') + (SOURCE_LABEL[c.bestSource] || '');
